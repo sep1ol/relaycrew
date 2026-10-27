@@ -1,0 +1,51 @@
+# 03 · Developer setup
+
+Give each developer a gateway URL and an individual member key. With a public HTTPS endpoint, developers do not need SSH access to the VPS. An SSH tunnel is the alternative for a private endpoint.
+
+## Create member access
+
+As an administrator, open Team (**Equipe**) in the dashboard. Add a member, select the permitted accounts, and set the concurrent request limit. Copy the member key when it appears and deliver it privately. The key is shown once.
+
+The same operation is available through the service-user CLI:
+
+```bash
+rc team accounts
+rc team add alice --accounts '<account-id>' --max-concurrent 4
+```
+
+An explicit `'*'` grant includes all current and future accounts. Select stable IDs when a member should use only specific accounts.
+
+## Connect Claude Code
+
+In a Bash terminal on the developer's laptop, enter the member key:
+
+```bash
+read -r -s -p 'RelayCrew member key: ' TEAM_GATEWAY_KEY
+export TEAM_GATEWAY_KEY
+printf '\n'
+export ANTHROPIC_BASE_URL=https://gateway.example.com
+export ANTHROPIC_API_KEY="$TEAM_GATEWAY_KEY"
+unset ANTHROPIC_AUTH_TOKEN
+claude
+```
+
+Replace the hostname with your gateway. For an SSH tunnel, use the local tunnel address instead. See [Claude Code configuration](../teams.md#configure-claude-code) for direct HTTP and subscription-preserving MITM modes.
+
+## Connect Codex
+
+Choose the configuration matching the provider account granted to this developer:
+
+- [ChatGPT/Codex subscription](../teams.md#configure-codex) uses a base URL ending in `/backend-api/codex` and retains the client's own subscription authentication.
+- [OpenAI API key](../teams.md#configure-codex-with-an-openai-api-key) uses a base URL ending in `/v1`. The client uses the member key; the platform key stays on the VPS.
+
+Keep the member key exported in the environment that launches Codex. The VPS tutorial contains the complete user-level TOML configurations and current compatibility limits.
+
+## Verify the connection
+
+Send a short prompt. Confirm that it completes and that the member's counters increase in Team or Usage. This request consumes provider capacity. Use the [member access checks](../teams.md#check-the-members-access) to verify identity and administrator boundaries without an inference request.
+
+Developers continue running `claude` and `codex` on their laptops. The gateway handles account selection and authentication. Rotate or revoke their member key when access changes.
+
+---
+
+[Previous · Provider Accounts](../02-provider-accounts/README.md) · [Documentation index](../README.md) · [Next · Dashboard](../04-dashboard/README.md)

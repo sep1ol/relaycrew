@@ -241,7 +241,7 @@ Re-running `relaycrew service install` rewrites the unit and restarts the proxy 
 
 ## Control routes under a second name
 
-Every `/relaycrew/…` route the server exposes — `status`, `quota`, `reload`, `switch`, `disable`, `priority`, `threshold`, `probe`, `dashboard` and `mcp` — also answers at the same path under `/relaycrew/…`, with the same gates and the same replies. It is the first step of the [rename to RelayCrew](../README.md#renaming-to-relaycrew); scripts and dashboards written against `/relaycrew/…` keep working unchanged.
+Every `/relaycrew/…` route the server exposes — `status`, `quota`, `reload`, `switch`, `disable`, `priority`, `threshold`, `probe`, `dashboard` and `mcp` — also answers at the same path under `/relaycrew/…`, with the same gates and the same replies. It is the first step of the [rename to RelayCrew](brand-migration.md); scripts and dashboards written against `/relaycrew/…` keep working unchanged.
 
 ## Status dashboard (browser)
 

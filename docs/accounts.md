@@ -13,6 +13,8 @@ Choose a login method explicitly:
 
 `--oauth` remains an alias for `--claude`, and `--api` remains an alias for `--claude-api`. Standalone `--token` keeps the Claude copy-and-paste flow. Combine `--claude --token` to select that flow explicitly. Conflicting login methods are rejected. Without a method, an interactive terminal shows the login menu; a noninteractive invocation defaults to Claude authorization.
 
+<a name="oauth-login-recommended"></a>
+
 ## Claude subscription login
 
 ```bash
@@ -63,6 +65,8 @@ Instead of storing an OAuth account's tokens in `relaycrew.json`, an account ent
 ```
 
 The tokens (`accessToken`, `refreshToken`, `expiresAt`) are read from that file at startup and again on every config reload, so a login refreshed by Claude Code itself is picked up without re-running `relaycrew import`. Every other field on the entry (`priority`, `disabled`, `upstream`, `modelMap`, …) is kept as written. A file with no token skips the account with a message rather than sending an empty credential upstream. `relaycrew import` is the alternative: it copies the tokens into the config once.
+
+<a name="api-key"></a>
 
 ## Anthropic API key
 

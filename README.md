@@ -1,8 +1,34 @@
 # RelayCrew
 
+[![CI](https://github.com/sep1ol/relaycrew/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sep1ol/relaycrew/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Self-hosted gateway for Claude Code and Codex. Run one gateway on a VPS, keep provider credentials on the server, and issue each developer an individually revocable gateway key.
 
 This community fork is maintained at [sep1ol/relaycrew](https://github.com/sep1ol/relaycrew). It retains the MIT license and history of [KarpelesLab/teamclaude](https://github.com/KarpelesLab/teamclaude). The upstream project targets individual use. This fork adds an explicit team access boundary.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/overview-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/screenshots/overview-light.png">
+  <img alt="RelayCrew dashboard with provider availability and usage history, using synthetic demo data." src="docs/assets/screenshots/overview-light.png">
+</picture>
+
+[Read the documentation](docs/README.md) · [Deploy on a VPS](docs/teams.md) · [Explore the dashboard](docs/04-dashboard/README.md) · [Contribute](CONTRIBUTING.md)
+
+## Documentation
+
+Follow the numbered guides from setup to daily use:
+
+| Guide | Topic |
+| --- | --- |
+| [00 · Introduction](docs/00-introduction/README.md) | Gateway architecture, credentials, and scope |
+| [01 · Installation](docs/01-installation/README.md) | Local preview, systemd, and Docker Compose |
+| [02 · Provider accounts](docs/02-provider-accounts/README.md) | Claude, Codex, and API-key login |
+| [03 · Developer setup](docs/03-developer-setup/README.md) | Member keys and remote client configuration |
+| [04 · Dashboard tour](docs/04-dashboard/README.md) | Screenshots and administrative workflows |
+| [05 · Daily operations](docs/05-operations/README.md) | Monitoring, access, backups, and upgrades |
+| [06 · Contribute](docs/06-contributing/README.md) | Issues, documentation, tests, and pull requests |
+| [07 · Reference](docs/07-reference/README.md) | Configuration, routing, quotas, and API contracts |
 
 ## What team mode provides
 
@@ -47,6 +73,8 @@ node src/index.js team revoke bob
 Changes notify the local server. If a reload fails, the command reports that a restart is required. See [team operations](docs/teams.md) for installation on a VPS and client configuration.
 
 ## Dashboard
+
+The [visual tour](docs/04-dashboard/README.md) includes screenshots of both themes, account controls, team access, and usage distributions. Run `npm run preview` to explore an isolated demonstration with synthetic data.
 
 Open `/relaycrew/dashboard` on the gateway or run `node src/index.js dashboard`. The workspace includes accounts, team management, sessions, settings and historical usage distributions. Team controls use the administrator key; member keys cannot view fleet data. See the [dashboard guide](docs/dashboard.md) for operation, API contracts and historical coverage limits.
 

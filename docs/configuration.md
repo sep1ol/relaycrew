@@ -105,7 +105,7 @@ While the config is being rewritten — by the server rotating a refresh token, 
 
 ## Environment variables
 
-Every `RELAYCREW_*` variable below is also read under the name `RELAYCREW_*`, which wins when both are set — the project is [being renamed](../README.md#renaming-to-relaycrew), and the old spelling keeps working throughout.
+Every `RELAYCREW_*` variable below is also read under the name `RELAYCREW_*`, which wins when both are set — the project is [being renamed](brand-migration.md), and the old spelling keeps working throughout.
 
 | Variable | Effect |
 | --- | --- |
