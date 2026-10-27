@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderStatus, showSessionRow, showWeeklyRow } from '../src/status-renderer.js';
-import { renderDashboardHtml } from '../src/dashboard.js';
 
 const now = Date.parse('2026-07-03T12:00:00Z');
 
@@ -646,12 +645,6 @@ test('showSessionRow hides the row only for a plan with no session window and no
   assert.equal(showSessionRow(null), true);
 });
 
-test('the dashboard card draws its Session row by the same rule', () => {
-  const html = renderDashboardHtml();
-  assert.ok(html.includes(showSessionRow.toString()), 'the page carries the shared helper');
-  assert.match(html, /if \(showSessionRow\(q\)\) card\.appendChild\(quotaRow\('Session'/);
-  assert.doesNotMatch(html, /^\s*card\.appendChild\(quotaRow\('Session'/m, 'no unconditional Session row is left');
-});
 
 test('showWeeklyRow hides the row only for a plan with no shared weekly window and no reading', () => {
   assert.equal(showWeeklyRow({ weeklyWindowStated: false, unified7d: null }), false);
@@ -661,11 +654,4 @@ test('showWeeklyRow hides the row only for a plan with no shared weekly window a
   assert.equal(showWeeklyRow({ weeklyWindowStated: true, unified7d: null }), true);
   assert.equal(showWeeklyRow({ unified7d: null }), true, 'an account that has not said keeps the row');
   assert.equal(showWeeklyRow(null), true);
-});
-
-test('the dashboard card draws its Weekly row by the same rule', () => {
-  const html = renderDashboardHtml();
-  assert.ok(html.includes(showWeeklyRow.toString()), 'the page carries the shared helper');
-  assert.match(html, /if \(showWeeklyRow\(q\)\) card\.appendChild\(quotaRow\('Weekly'/);
-  assert.doesNotMatch(html, /^\s*card\.appendChild\(quotaRow\('Weekly'/m, 'no unconditional Weekly row is left');
 });

@@ -24,9 +24,9 @@ config.proxy = { ...config.proxy, host: '127.0.0.1', port, teamMode: true, trust
   usageDimensions: [{ name: 'project', header: 'x-preview-project' }],
 };
 config.accounts = [
-  { id: 'local-claude', name: 'Claude · demonstração local', type: 'oauth', accessToken: 'synthetic-local-claude', expiresAt: Date.now() + 86_400_000 },
-  { id: 'local-codex', name: 'Codex · demonstração local', type: 'oauth', provider: 'codex', accessToken: 'synthetic-local-codex', accountId: 'synthetic-codex-account', expiresAt: Date.now() + 86_400_000 },
-  { id: 'local-openai', name: 'OpenAI API · demonstração local', type: 'apikey', provider: 'openai', apiKey: 'synthetic-local-provider' },
+  { id: 'local-claude', name: 'Claude · demo', type: 'oauth', accessToken: 'synthetic-local-claude', expiresAt: Date.now() + 86_400_000 },
+  { id: 'local-codex', name: 'Codex · demo', type: 'oauth', provider: 'codex', accessToken: 'synthetic-local-codex', accountId: 'synthetic-codex-account', expiresAt: Date.now() + 86_400_000 },
+  { id: 'local-openai', name: 'OpenAI API · demo', type: 'apikey', provider: 'openai', apiKey: 'synthetic-local-provider' },
 ];
 config.upstream = `http://127.0.0.1:${upstream.address().port}`;
 for (const account of config.accounts) account.upstream = config.upstream;
