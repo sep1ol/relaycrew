@@ -1,21 +1,26 @@
 # Dashboard screenshots
 
-These PNGs show the local synthetic preview. They contain no real provider credentials, member keys, or private request data. The preview banner remains visible so the source of the data is clear.
+These PNGs show the actual dashboard with synthetic data. They contain no real provider credentials, member keys, or private request data. The demo banner remains visible in every image.
 
-The documentation tour images were captured on 2026-10-27 using Orca’s embedded browser. Their dashboard UI is from [6824367](https://github.com/sep1ol/relaycrew/commit/6824367), with a synthetic preview fixture representing separate Claude, Codex, and OpenAI API pools.
+The images were captured on 2026-10-27 using Orca's embedded browser and the English dashboard from [75a6917](https://github.com/sep1ol/relaycrew/commit/75a6917). The fixture represents four fictional Claude and Codex accounts and six team members. `usage.png` is also the README hero image for both GitHub themes.
 
-`readme-accounts-light.png` is the README image for both GitHub themes. It was captured on the same date from [9733195](https://github.com/sep1ol/relaycrew/commit/9733195), using the real Accounts view with fictional account names, quotas, and activity. The light-mode capture is 1600 × 1063 pixels at 135% zoom. The larger content makes Claude and Codex pools easier to read in the README.
+| Image | Theme | Viewport | Content zoom |
+| --- | --- | --- | --- |
+| `overview-light.png` | Light | 1600 × 1030 | 115% |
+| `overview-dark.png` | Dark | 1600 × 1030 | 115% |
+| `accounts.png` | Light | 1600 × 1060 | 115% |
+| `team.png` | Light | 1600 × 990 | 115% |
+| `usage.png` | Light | 1600 × 950 | 115% |
 
 ## Refresh the images
 
-1. Run `npm run preview` from a source checkout.
+1. Run `npm run preview` from a source checkout. This creates an isolated temporary configuration with synthetic accounts, members, and history.
 2. Open the printed dashboard URL in a browser. Use Orca's embedded browser when available.
-3. Sign in with the administrator key from the protected temporary configuration printed by the preview command.
-4. Use a desktop viewport of 1600 × 1250 CSS pixels. Wait for the data to load, then capture a normal viewport screenshot near the top of each view. Check that the image has no horizontal clipping or repeated sections. Avoid oversized viewport captures on a client-hosted browser.
-5. Capture Overview in light and dark themes as `overview-light.png` and `overview-dark.png`.
-6. Capture Accounts, Team, and Usage in the light theme as `accounts.png`, `team.png`, and `usage.png`.
-7. Check every image for stale content and accidentally exposed credentials before committing. Keep the synthetic-data banner visible and never capture a one-time key reveal.
-8. For `readme-accounts-light.png`, capture Accounts in light mode at 135% zoom with a 1600 × 1063 viewport. Use fictional quota readings and keep the demo label visible.
-9. Update the [visual tour](../../04-dashboard/README.md) if a control or workflow changed.
+3. Sign in with the administrator key from the protected temporary configuration printed by the preview command. Do not include the key or its reveal dialog in a screenshot.
+4. Choose English with the language selector. Reset any customized chart colors so the images show the default palette.
+5. Set the viewport and content zoom from the table. With CSS content zoom, keep the body height at `innerHeight / zoom` CSS pixels so the frame stays inside the viewport. Use a normal viewport capture rather than a full-page capture.
+6. Capture Overview in both themes and Accounts, Team, and Usage in light mode. Scroll the main content pane to the top before each capture. The frame and sidebar should stay inside the viewport with padding on every side.
+7. Check the images for English labels, fictional names, visible demo banners, clipping, repeated sections, and accidentally exposed credentials. Long views continue inside the scrollable pane.
+8. Update this provenance and the [visual tour](../../04-dashboard/README.md) when a control or workflow changes. Stop the preview after capture.
 
-Browser device scale can affect the PNG's pixel dimensions. The CSS viewport defines the layout. The documentation tour captures use 1600 × 1250 PNGs. Longer views continue below the captured viewport. Keep the screenshots as actual captures rather than mockups. Stop the preview after capture when it is no longer needed.
+The preview generates fresh synthetic activity, so its exact counts can differ from these images. Use fictional quota fixtures when demonstrating quota bars; a missing quota reading is not a zero-usage reading. Keep screenshots as browser captures rather than mockups.

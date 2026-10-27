@@ -15,6 +15,14 @@ The page itself is public and contains no account data. Requests for data and co
 
 The dashboard updates the existing status snapshot every five seconds. Team and history data are fetched when their views need them. Errors remain visible rather than replacing missing data with a healthy status.
 
+## Language and chart preferences
+
+English is the default dashboard language. The language selector also offers Portuguese (Brazil) and Spanish. The browser remembers the selected language for this gateway. Dates and numbers follow the selected language; account names, model identifiers, and provider error messages retain their original values.
+
+Chart series use distinct default colors. Select a color in the legend to customize it, or use its reset control to restore the default. The same member or group keeps its color across the overview chart, Usage timeline, and distribution bars. Color preferences are stored in this browser for the current gateway, independently for each grouping. Custom colors apply to light and dark themes. Clearing browser storage removes these preferences. If storage is unavailable, the current page can still use the selection.
+
+The workspace frame fits inside the viewport with padding on every side. The main content pane owns vertical scrolling, while wide tables can scroll horizontally inside their wrappers. The page around the frame stays still.
+
 ## Manage team access
 
 Enable team mode with `relaycrew team init` before adding members. Provider sign-in still runs on the gateway through `relaycrew login`; provider credentials never need to reach a developer's browser.

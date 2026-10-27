@@ -7,7 +7,7 @@ Self-hosted gateway for Claude Code and Codex. Run one gateway on a VPS, keep pr
 
 This community fork is maintained at [sep1ol/relaycrew](https://github.com/sep1ol/relaycrew). It retains the MIT license and history of [KarpelesLab/teamclaude](https://github.com/KarpelesLab/teamclaude). The upstream project targets individual use. This fork adds an explicit team access boundary.
 
-<img alt="RelayCrew accounts dashboard in light mode, showing Claude and Codex account pools, quota usage, and routing controls with fictional data." src="docs/assets/screenshots/readme-accounts-light.png">
+<img alt="RelayCrew usage dashboard in English and light mode, showing requests over time for a fictional team." src="docs/assets/screenshots/usage.png">
 
 [Read the documentation](docs/README.md) · [Deploy on a VPS](docs/teams.md) · [Explore the dashboard](docs/04-dashboard/README.md) · [Contribute](CONTRIBUTING.md)
 
