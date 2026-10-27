@@ -1,5 +1,5 @@
 // The status dashboard: a single self-contained HTML page served at
-// GET /relaycrew/dashboard, rendering /relaycrew/status for humans.
+// GET /dashboard, rendering /relaycrew/status for humans.
 //
 // The page itself contains NO data — it is a static asset whose script fetches
 // /relaycrew/status (same origin) with the proxy key and re-renders every few

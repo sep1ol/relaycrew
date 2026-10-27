@@ -17,7 +17,7 @@ function request(port, path, { method = 'GET', headers = {} } = {}) {
     const req = http.request({ host: '127.0.0.1', port, method, path, headers }, res => {
       let body = '';
       res.on('data', chunk => { body += chunk; });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
     });
     req.on('error', reject);
     req.end();
@@ -80,8 +80,8 @@ test('canonical and legacy control routes share authorization and never leak unk
     for (const name of ['relaycrew', 'teamrouter', 'teamclaude']) {
       assert.equal((await request(port, `/${name}/status`)).status, 200);
       const page = await request(port, `/${name}/dashboard`);
-      assert.equal(page.status, 200);
-      assert.match(page.body, /<title>RelayCrew<\/title>/);
+      assert.equal(page.status, 308);
+      assert.equal(page.headers.location, '/dashboard');
       assert.equal((await request(port, `/${name}/quota`)).status, 200);
       const csrf = await request(port, `/${name}/reload`, { method: 'POST', headers: { origin: 'https://evil.example' } });
       assert.equal(csrf.status, 403);

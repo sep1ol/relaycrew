@@ -1802,7 +1802,7 @@ async function dashboardCommand() {
   const port = config.proxy.port;
   const bound = envVar('HOST') || config.proxy.host || '127.0.0.1';
   const host = (bound === '0.0.0.0' || bound === '::') ? '127.0.0.1' : bound;
-  const dashboardUrl = `http://${host}:${port}/relaycrew/dashboard`;
+  const dashboardUrl = `http://${host}:${port}/dashboard`;
   if (!(await isProxyUp(port))) {
     console.error(`[RelayCrew] Proxy not running on port ${port}.`);
     console.error('Start it with: relaycrew server   (or: relaycrew service install)');

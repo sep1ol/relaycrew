@@ -251,7 +251,7 @@ sudo docker compose -f /opt/relaycrew/compose.yaml exec --user 1000:1000 gateway
 
 Store this administrator key privately. Do not give developers the server configuration, provider tokens, or administrator key. `team init` deliberately does not print it.
 
-On your laptop, open `http://127.0.0.1:3456/relaycrew/dashboard` through the tunnel, or `https://gateway.example.com/relaycrew/dashboard` through Caddy. Enter the administrator key. Confirm that Accounts lists your signed-in providers and Team allows member management. The [dashboard guide](dashboard.md) explains all six views.
+On your laptop, open `http://127.0.0.1:3456/dashboard` through the tunnel, or `https://gateway.example.com/dashboard` through Caddy. Enter the administrator key. Confirm that Accounts lists your signed-in providers and Team allows member management. The [dashboard guide](dashboard.md) explains all six views.
 
 To verify an authenticated request from your laptop without putting the literal key in shell history or curl's arguments, use Bash:
 

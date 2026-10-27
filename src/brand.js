@@ -26,5 +26,5 @@ export function canonicalControlUrl(url) {
 
 /** @param {string} path */
 export function isControlPath(path) {
-  return [NAME, ...LEGACY_NAMES].some(name => path === `/${name}` || path.startsWith(`/${name}/`));
+  return ['dashboard', NAME, ...LEGACY_NAMES].some(name => path === `/${name}` || path.startsWith(`/${name}/`));
 }

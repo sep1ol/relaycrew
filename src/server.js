@@ -498,7 +498,13 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null,
       // page's own script with the key. A browser address bar cannot send
       // x-api-key, so gating the asset would just 401 every remote browser
       // without protecting anything.
-      if (req.method === 'GET' && req.url === '/relaycrew/dashboard') {
+      const pathname = (req.url || '').split('?', 1)[0];
+      if (req.method === 'GET' && ['/dashboard/', '/relaycrew/dashboard', '/relaycrew/dashboard/'].includes(pathname)) {
+        res.writeHead(308, { Location: `/dashboard${(req.url || '').slice(pathname.length)}` });
+        res.end();
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/dashboard') {
         // The page keeps the proxy key in localStorage; the policy is what
         // stops any script but its own from ever running next to it.
         res.writeHead(200, {

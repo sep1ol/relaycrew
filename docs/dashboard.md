@@ -1,6 +1,6 @@
 # Operate the RelayCrew dashboard
 
-Start the gateway, then open `/relaycrew/dashboard` on its origin. For a local installation the default address is `http://localhost:3456/relaycrew/dashboard`. `relaycrew dashboard` opens it in your browser. Use HTTPS or an SSH tunnel when connecting to a VPS.
+Start the gateway, then open `/dashboard` on its origin. For a local installation the default address is `http://localhost:3456/dashboard`. `relaycrew dashboard` opens it in your browser. Use HTTPS or an SSH tunnel when connecting to a VPS.
 
 The page itself is public and contains no account data. Requests for data and controls use the gateway's authentication rules. In team mode use the administrator key. Team management and usage history always require that key, including on localhost. Member keys cannot inspect the fleet or manage another member.
 
@@ -62,7 +62,7 @@ History requires `scope=clients` or `scope=dimension&dimension=<configured-name>
 
 ## Preview without provider credentials
 
-Run `npm run preview` from a source checkout. It starts an isolated loopback-only gateway at `http://localhost:43190/relaycrew/dashboard` with clearly labeled synthetic accounts, members and 24-hour history. It prints the temporary protected configuration path; read its administrator key there to sign into the local demonstration. `RELAYCREW_PREVIEW_PORT` selects another unprivileged port. Stop with Ctrl+C to stop the gateway and remove its temporary configuration. The preview never imports your provider accounts and uses a local synthetic upstream.
+Run `npm run preview` from a source checkout. It starts an isolated loopback-only gateway at `http://localhost:43190/dashboard` with clearly labeled synthetic accounts, members and 24-hour history. It prints the temporary protected configuration path; read its administrator key there to sign into the local demonstration. `RELAYCREW_PREVIEW_PORT` selects another unprivileged port. Stop with Ctrl+C to stop the gateway and remove its temporary configuration. The preview never imports your provider accounts and uses a local synthetic upstream.
 
 ## Recover an interrupted configuration lock
 
