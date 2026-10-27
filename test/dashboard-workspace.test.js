@@ -291,7 +291,9 @@ test('browser clipboard completions cannot alter a new authentication context', 
 test('browser history distribution retains chart series colors after bucket selection and sorting', async () => {
   const page = boot(); await page.answer(200, team()); await page.navigate('usage');
   await page.answer(200, { ...history(), series: [{ key: 'alpha', values: [1, 5] }, { key: 'beta', values: [3, 0] }], total: [4, 5] });
-  const expected = { alpha: '#1c6be3', beta: '#7197d5' };
+  const swatches = page.$('historyChart').querySelectorAll('i').map(element => element.style.background);
+  const expected = { alpha: swatches[0], beta: swatches[1] };
+  assert.notEqual(expected.alpha, expected.beta);
   function checkColors() {
     const rows = page.$('historyDistribution').querySelectorAll('div').filter(element => element.className === 'distribution-line');
     assert.equal(rows.length, 2);

@@ -761,31 +761,6 @@ const PAGE = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RelayCrew</title>
 <style>
-  /* Dark is the default, and stays the default for a viewer whose system says
-     nothing. The light palette is applied two ways: by the media query when no
-     choice has been stored (data-theme absent), and by the attribute when one
-     has. The media rule excludes an explicit dark choice, so choosing dark on a
-     light desktop is honoured rather than overridden by the system. */
-  :root {
-    color-scheme: dark;
-    --bg: #101418; --panel: #171d24; --line: #242c36;
-    --text: #d7dde4; --dim: #8a949f; --accent: #53b1fd;
-    --ok: #3fb950; --warn: #d29922; --bad: #f85149;
-  }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) {
-      color-scheme: light;
-      --bg: #f6f8fa; --panel: #ffffff; --line: #d8dee4;
-      --text: #1f2328; --dim: #59636e; --accent: #0969da;
-      --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-    }
-  }
-  :root[data-theme="light"] {
-    color-scheme: light;
-    --bg: #f6f8fa; --panel: #ffffff; --line: #d8dee4;
-    --text: #1f2328; --dim: #59636e; --accent: #0969da;
-    --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-  }
   * { box-sizing: border-box; margin: 0; }
   body { background: var(--bg); color: var(--text); font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; padding: 24px; }
   main { max-width: 860px; margin: 0 auto; }
@@ -835,10 +810,10 @@ const PAGE = `<!doctype html>
   #caller { font-size: 12px; margin: 8px 0; color: var(--dim); }
   .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
   .filters label { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 6px; }
-  .filters select { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; font-size: 12px; padding: 4px 8px; }
+  .filters select { background: var(--bg); border: 1px solid var(--control-line); border-radius: 6px; color: var(--text); font: inherit; font-size: 12px; padding: 4px 8px; }
   .hint { color: var(--dim); font-size: 12px; margin-left: auto; }
   .actions { display: flex; gap: 8px; margin: 8px 0 16px; }
-  .actions button { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--dim); cursor: pointer; }
+  .actions button { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--control-line); background: transparent; color: var(--dim); cursor: pointer; }
   .actions button:hover { color: var(--text); border-color: var(--text); }
   .actions button:disabled { opacity: .5; cursor: default; }
   .actions button.sel { color: var(--text); border-color: var(--accent); }
@@ -847,7 +822,7 @@ const PAGE = `<!doctype html>
      stands, while this one edits a stored setting — a gap says so without a
      second row. */
   .actions .thr { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--dim); }
-  .actions .thr input { width: 64px; font: inherit; font-size: 12px; padding: 4px 8px; text-align: right; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--text); }
+  .actions .thr input { width: 64px; font: inherit; font-size: 12px; padding: 4px 8px; text-align: right; border-radius: 999px; border: 1px solid var(--control-line); background: transparent; color: var(--text); }
   th.sortable { cursor: pointer; user-select: none; }
   th.sortable:hover { color: var(--text); }
   td.dim { color: var(--dim); }
@@ -862,7 +837,7 @@ const PAGE = `<!doctype html>
   #problems .bad { background: rgba(248,81,73,.12); border: 1px solid var(--bad); color: var(--bad); }
   #problems .warn { background: rgba(210,153,34,.12); border: 1px solid var(--warn); color: var(--warn); }
   #keybox { display: none; margin: 40px auto; max-width: 420px; text-align: center; }
-  #keybox input { width: 100%; padding: 10px 12px; margin: 12px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; }
+  #keybox input { width: 100%; padding: 10px 12px; margin: 12px 0; background: var(--panel); border: 1px solid var(--control-line); border-radius: 6px; color: var(--text); font: inherit; }
   #keybox button { padding: 8px 20px; background: var(--accent); border: 0; border-radius: 6px; color: var(--panel); font: inherit; font-weight: 600; cursor: pointer; }
   footer { color: var(--dim); font-size: 12px; margin-top: 24px; }
 ${WORKSPACE_CSS}

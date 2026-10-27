@@ -128,7 +128,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers) {
     sessions: ['Sessões', 'Acompanhe conversas, contexto e contas fixadas.', 'TRABALHO EM ANDAMENTO'],
     settings: ['Configurações', 'Ajustes do gateway e ações de operação.', 'SEU AMBIENTE']
   };
-  var colors = ['#1c6be3', '#7197d5', '#8b7eb8', '#2b9196', '#b78a4a', '#ae6a83', '#608b54', '#6582a1', '#a2a7c3', '#ad875f', '#7a9c9b', '#9c729f', '#939aa6'];
+  var colors = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)', 'var(--series-6)', 'var(--series-7)', 'var(--series-8)', 'var(--series-9)', 'var(--series-10)', 'var(--series-11)', 'var(--series-12)', 'var(--series-13)'];
   /** @param {number|null|undefined} n */
   var number = function (n) { return Number(n || 0).toLocaleString('pt-BR'); };
   /** @param {string} tag @param {string} [cls] @param {string|number} [text] @returns {any} */
