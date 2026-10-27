@@ -578,7 +578,7 @@ export class NestedFieldFinder {
 // Where each provider's request body carries the reasoning effort. Anthropic's
 // Messages API has it in `output_config.effort`; the Codex Responses API in
 // `reasoning.effort`. Keyed by provider id (see provider.js).
-const EFFORT_PARENT = new Map([['anthropic', 'output_config'], ['codex', 'reasoning']]);
+const EFFORT_PARENT = new Map([['anthropic', 'output_config'], ['codex', 'reasoning'], ['openai', 'reasoning']]);
 
 // The reasoning effort a JSON request body asks for, or null when it sets none.
 // Read for display only, and as the client sent it: no list of known levels,

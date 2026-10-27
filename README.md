@@ -25,13 +25,13 @@ git clone https://github.com/sep1ol/relaycrew.git
 cd relaycrew
 git switch main
 node src/index.js team init
-node src/index.js login
+node src/index.js login --claude
 node src/index.js team accounts
 node src/index.js team add alice --accounts '<account-id>' --max-concurrent 4
 node src/index.js server --headless
 ```
 
-Run `login` once for each provider account. It supports Claude OAuth, Codex OAuth, and API credentials through the existing login flows. See [accounts](docs/accounts.md). Member keys are printed only when created or rotated. Store and distribute them through a private channel.
+Run `login` once for each provider account. Choose `--claude` for a Claude subscription, `--codex` for a ChatGPT/Codex subscription, `--claude-api` for an Anthropic API key, or `--openai-api` for an OpenAI API key. OpenAI API keys serve Responses requests. See [accounts](docs/accounts.md). Member keys are printed only when created or rotated. Store and distribute them through a private channel.
 
 The administrator key stays in the configuration file and is never printed by `team init`. Keep the file private. Do not give developers the server configuration or provider OAuth tokens.
 

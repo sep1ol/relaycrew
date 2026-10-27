@@ -52,10 +52,10 @@ rc team init
 For a Claude subscription account, use the copy-and-paste login flow:
 
 ```bash
-rc login --token
+rc login --claude --token
 ```
 
-Open the printed URL in your laptop's browser, sign in, and paste the returned code into the VPS prompt. Repeat the command for each account. For an Anthropic API-key account, use `rc login --api` instead and enter the provider key at its prompt.
+Open the printed URL in your laptop's browser, sign in, and paste the returned code into the VPS prompt. Repeat the command for each account. For an Anthropic API-key account, use `rc login --claude-api` instead and enter the provider key at its prompt.
 
 For a ChatGPT/Codex account:
 
@@ -63,7 +63,9 @@ For a ChatGPT/Codex account:
 rc login --codex
 ```
 
-Open the printed URL in your laptop's browser. If the browser cannot load `http://localhost:1455/auth/callback`, copy the complete callback address from its address bar into the VPS prompt. Keep the `code` and `state` parameters. Do not add `--token` to this command; that flag selects the Claude login flow. See [signing accounts in over SSH](accounts.md#signing-accounts-in-over-ssh) for the optional native callback tunnel.
+Open the printed URL in your laptop's browser. If the browser cannot load `http://localhost:1455/auth/callback`, copy the complete callback address from its address bar into the VPS prompt. Keep the `code` and `state` parameters. Do not add `--token` to this command; it belongs to the Claude login flow and conflicting methods are rejected. See [signing accounts in over SSH](accounts.md#signing-accounts-in-over-ssh) for the optional native callback tunnel.
+
+For an OpenAI platform API key, use `rc login --openai-api`. This creates a native Responses account, separate from ChatGPT subscription sign-in.
 
 List the configured account IDs:
 
@@ -138,10 +140,10 @@ This example uses the image's default UID and GID, both 1000. The entrypoint run
 For a Claude subscription account:
 
 ```bash
-sudo docker compose run --rm gateway login --token
+sudo docker compose run --rm gateway login --claude --token
 ```
 
-Open the printed URL on your laptop, then paste the returned code into the container's prompt. For an Anthropic API-key account, replace `login --token` with `login --api`.
+Open the printed URL on your laptop, then paste the returned code into the container's prompt. For an Anthropic API-key account, replace `login --claude --token` with `login --claude-api`.
 
 For a ChatGPT/Codex account:
 
@@ -150,6 +152,8 @@ sudo docker compose run --rm gateway login --codex
 ```
 
 Open the URL on your laptop. Copy the complete `http://localhost:1455/auth/callback?...` address from the browser's address bar into the prompt if the callback page cannot load. This manual flow does not require publishing port 1455 from the container. Do not combine `--token` with `--codex`.
+
+For an OpenAI platform API key, use `sudo docker compose run --rm gateway login --openai-api`.
 
 ### Start the gateway
 
@@ -328,7 +332,26 @@ For HTTPS, change `base_url` to `https://gateway.example.com/backend-api/codex`.
 
 Use a Codex version supporting custom providers and environment-backed headers. See the [official OpenAI configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) for those settings. RelayCrew's upstream Codex integration is experimental. Test a prompt, streaming, tool calls, and compaction with your installed CLI before rolling it out. Local tests do not establish live subscription compatibility.
 
-For an OpenAI API-key account, use a provider base URL ending in `/v1` and the API authentication configuration supported by that Codex release. Configure the account's OpenAI-compatible upstream first. Keep gateway authentication in `x-api-key`; RelayCrew injects the selected provider credential.
+### Configure Codex with an OpenAI API key
+
+Add the provider account on the VPS with `rc login --openai-api`, then grant its account ID to the developer. Keep `TEAM_GATEWAY_KEY` exported on the developer's laptop and merge this configuration into their user-level `~/.codex/config.toml`:
+
+```toml
+model_provider = "team_openai"
+model = "<model-available-to-your-project>"
+
+[model_providers.team_openai]
+name = "RelayCrew OpenAI API"
+base_url = "http://127.0.0.1:3456/v1"
+wire_api = "responses"
+requires_openai_auth = false
+env_key = "TEAM_GATEWAY_KEY"
+env_http_headers = { "x-api-key" = "TEAM_GATEWAY_KEY" }
+```
+
+Replace the model placeholder and use `https://gateway.example.com/v1` for HTTPS. The client uses the member key for gateway authentication; RelayCrew injects the platform API key on the server. This API-key configuration does not require a ChatGPT subscription login. The provider settings are described in the [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
+This integration supports HTTP Responses and compaction with an explicit model. The shared `/v1/models` endpoint retains Anthropic behavior, so do not rely on OpenAI model discovery. A Codex CLI 0.163.0 smoke check completed a streaming request through a local fake provider with this configuration. It did not validate a live API key or model entitlement. See [OpenAI API accounts](accounts.md#openai-api-key).
 
 ## 6. Operate the team
 

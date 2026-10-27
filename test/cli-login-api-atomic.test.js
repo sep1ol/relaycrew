@@ -55,7 +55,7 @@ async function fakeServer(t) {
   return { seen, port: server.address().port };
 }
 
-function runCli(configPath, cliArgs) {
+function runCli(configPath, cliArgs, prompt = 'Anthropic API key:') {
   const child = spawn(process.execPath, [cliPath, ...cliArgs], {
     env: { ...process.env, RELAYCREW_CONFIG: configPath, RELAYCREW_DISABLE_AUTOUPDATE: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -74,7 +74,7 @@ function runCli(configPath, cliArgs) {
   const prompted = new Promise((resolve, reject) => {
     child.stderr.on('data', c => {
       stderr += c;
-      if (stderr.includes('Anthropic API key:')) resolve();
+      if (stderr.includes(prompt)) resolve();
     });
     done.then(() => reject(new Error(`CLI exited before prompting\n${stdout}\n${stderr}`)), reject);
   });
@@ -163,4 +163,56 @@ test('login --api tells a running server to reload once the key is saved', async
   assert.match(res.stdout, /Added API key account "api-test"/);
   assert.match(res.stdout, /Reloaded running server \(\+1 new account\)/);
   assert.deepEqual(server.seen, [{ method: 'POST', url: '/relaycrew/reload', key: 'tc-test' }]);
+});
+
+for (const [flag, prompt, provider] of [
+  ['--claude-api', 'Anthropic API key:', 'anthropic'],
+  ['--openai-api', 'OpenAI API key:', 'openai'],
+]) {
+  test(`login ${flag} preserves concurrent changes and reloads the saved provider account`, async t => {
+    const server = await fakeServer(t);
+    const configPath = await writeConfig(baseConfig(server.port));
+    const cli = runCli(configPath, ['login', flag, '--name', 'new-api', '--priority', '0', '--routing', 'socks5h://proxy.example.com:1080', '--no-check'], prompt);
+    await cli.prompted;
+    const rotated = JSON.parse(await readFile(configPath, 'utf8'));
+    rotated.accounts[0].refreshToken = 'rotated-while-prompting';
+    await writeFile(configPath, JSON.stringify(rotated));
+    cli.answer('sk-local-test');
+    const result = await cli.done;
+    assert.equal(result.code, 0, result.stderr);
+    assert.doesNotMatch(result.stdout + result.stderr, /sk-local-test/);
+    const saved = JSON.parse(await readFile(configPath, 'utf8'));
+    assert.equal(saved.accounts[0].refreshToken, 'rotated-while-prompting');
+    const added = saved.accounts.find(account => account.name === 'new-api');
+    assert.equal(added.type, 'apikey');
+    assert.equal(added.provider || 'anthropic', provider);
+    assert.equal(added.apiKey, 'sk-local-test');
+    assert.equal(added.priority, 0);
+    assert.equal(added.routing, 'socks5h://proxy.example.com:1080');
+    assert.deepEqual(server.seen, [{ method: 'POST', url: '/relaycrew/reload', key: 'tc-test' }]);
+  });
+}
+
+test('login rejects conflicting provider flags before prompting or changing configuration', async () => {
+  const configPath = await writeConfig(baseConfig(await closedPort()));
+  const before = await readFile(configPath, 'utf8');
+  for (const flags of [['--claude', '--codex'], ['--claude-api', '--openai-api'], ['--codex', '--token']]) {
+    const cli = runCli(configPath, ['login', ...flags, '--routing', 'https://proxy.example.com']);
+    await assert.rejects(cli.prompted, /CLI exited before prompting/);
+    const result = await cli.done;
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Choose only one login method/);
+    assert.equal(await readFile(configPath, 'utf8'), before);
+  }
+});
+
+test('login help lists canonical flags and compatibility aliases without starting authorization', async () => {
+  const configPath = await writeConfig(baseConfig(await closedPort()));
+  const cli = runCli(configPath, ['login', '--help', '--routing', 'https://proxy.example.com']);
+  await assert.rejects(cli.prompted, /CLI exited before prompting/);
+  const result = await cli.done;
+  assert.equal(result.code, 0, result.stderr);
+  for (const flag of ['--claude', '--codex', '--claude-api', '--openai-api', '--token', '--oauth', '--api']) {
+    assert.ok(result.stdout.includes(flag), flag);
+  }
 });

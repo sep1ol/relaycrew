@@ -15,7 +15,7 @@ import { TopLevelFieldFinder, modelGlobMatches, parseRequestEffort, parseRequest
 import { conversationDigest, pinKeyFor } from './conversation.js';
 import { BodyWriter, truncationNote } from './request-log.js';
 import { upstreamFetch, upstreamPoolStatus } from './upstream-fetch.js';
-import { applyAuthHeaders, upstreamFor, rewritesBody, defaultHeadersTimeoutFor, providerForPath, providerForHost, interceptHostsFor, providerOf, isSubscriptionAccount, canServeProvider, DEFAULT_PROVIDER, PROVIDERS } from './provider.js';
+import { applyAuthHeaders, upstreamFor, rewritesBody, defaultHeadersTimeoutFor, providerForPath, providerForHost, interceptHostsFor, providerOf, canServeProvider, DEFAULT_PROVIDER, PROVIDERS } from './provider.js';
 import { tunnelTls } from './sx.js';
 import { createEgressGuard } from './egress-guard.js';
 import { isRoutingFailure, describeRouting } from './account-routing.js';
@@ -3159,14 +3159,7 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
   // Carried on ctx rather than read straight back, because the failover hops
   // below run after an upstream round trip.
   const selection = {};
-  // A pin bypasses selection entirely, so the provider partition has to be
-  // enforced here too — otherwise TC_ACCT aimed at a Claude subscription would
-  // serve a Codex request from it, sending an OpenAI-shaped body to
-  // api.anthropic.com with a Claude token. Subscriptions only: an API-key
-  // account is metered capacity with no tie to a caller, so a pin to one stands.
-  const pinnedWrongProvider = pinned
-    && isSubscriptionAccount(pinned)
-    && providerOf(pinned) !== (ctx.provider || DEFAULT_PROVIDER);
+  const pinnedWrongProvider = pinned && !canServeProvider(pinned, ctx.provider || DEFAULT_PROVIDER);
   // The hop's destination was picked by pickAlternate against this request's
   // own exclusions, and is taken as-is: re-selecting here would walk the fleet
   // cursor onto it, which is exactly the move a detour must not make (#286).
@@ -3199,7 +3192,7 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
       type: 'error',
       error: {
         type: 'invalid_request_error',
-        message: `Pinned account "${pinned.name}" is a ${providerOf(pinned)} subscription and cannot serve a ${ctx.provider} request.`,
+        message: `Pinned account "${pinned.name}" uses ${providerOf(pinned)} credentials and cannot serve a ${ctx.provider} request.`,
       },
     }));
     return;

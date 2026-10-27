@@ -165,6 +165,7 @@ export function recentModelLabels(/** @type {any} */ usage, /** @type {number} *
 export function providerLabel(provider) {
   if (provider === 'codex') return 'Codex';
   if (provider === 'anthropic') return 'Claude';
+  if (provider === 'openai') return 'OpenAI API';
   return provider || 'Unknown';
 }
 

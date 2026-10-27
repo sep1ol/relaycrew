@@ -120,6 +120,11 @@ test('parseRequestEffort is null when the body sets no effort', () => {
   assert.equal(parseRequestEffort(null), null);
 });
 
+test('OpenAI Responses reasoning effort is read without interpreting Anthropic output settings', () => {
+  assert.equal(parseRequestEffort('{"reasoning":{"effort":"high"}}', 'openai'), 'high');
+  assert.equal(parseRequestEffort('{"output_config":{"effort":"high"}}', 'openai'), null);
+});
+
 test('parseRequestEffort ignores an effort key nested in messages and tools', () => {
   const body = JSON.stringify({
     model: 'm',

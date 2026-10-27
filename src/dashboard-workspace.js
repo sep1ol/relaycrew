@@ -234,7 +234,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers) {
     Object.keys(groups).sort().forEach(function (provider) {
       var list = groups[provider], available = list.filter(function (account) { return !account.disabled && !account.unavailable; });
       var row = node('div', 'provider-line'), info = node('div');
-      info.appendChild(node('div', 'provider-name', provider === 'anthropic' ? 'Anthropic' : provider === 'codex' ? 'Codex / OpenAI' : provider));
+      info.appendChild(node('div', 'provider-name', provider === 'anthropic' ? 'Anthropic' : provider === 'codex' ? 'Codex / OpenAI' : provider === 'openai' ? 'OpenAI API' : provider));
       var current = status.currentAccounts ? status.currentAccounts[provider] : status.currentAccount;
       info.appendChild(node('small', '', current ? 'Em uso: ' + current : 'Sem conta ativa'));
       row.appendChild(info); row.appendChild(node('span', 'provider-count', available.length + ' / ' + list.length + ' disponíveis')); providers.appendChild(row);

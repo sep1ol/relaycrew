@@ -49,6 +49,13 @@ export const PROVIDERS = {
     // dead-socket guard useful while leaving a long reasoning turn alone.
     headersTimeoutMs: 300_000,
   },
+  openai: {
+    id: 'openai',
+    label: 'OpenAI',
+    upstream: 'https://api.openai.com',
+    rewritesBody: false,
+    headersTimeoutMs: 300_000,
+  },
 };
 
 export const DEFAULT_PROVIDER = 'anthropic';
@@ -74,11 +81,8 @@ export function providerOf(account) {
  * token to Codex, and neither plan can be spent by the other's client. Those
  * accounts are partitioned by provider, strictly.
  *
- * An API key is not. It is metered capacity rather than a seat — nothing about
- * it says which app may spend it — so it stays eligible for any caller. That is
- * what lets a third-party backend (a `upstream` + `modelMap` account) serve
- * whichever app is asking, instead of being fenced off by a provider field it
- * never set.
+ * Legacy API-key backends stay eligible for any caller so translating upstreams
+ * keep working. Native OpenAI API keys belong only to the OpenAI Responses pool.
  */
 export function isSubscriptionAccount(account) {
   return account?.type === 'oauth';
@@ -98,7 +102,8 @@ export function isSubscriptionAccount(account) {
  * @returns {boolean}
  */
 export function canServeProvider(account, provider) {
-  return providerOf(account) === provider || !isSubscriptionAccount(account);
+  const ownProvider = providerOf(account);
+  return ownProvider === provider || (!isSubscriptionAccount(account) && ownProvider !== 'openai');
 }
 
 // The hosts each provider is reached on, for MITM interception.
@@ -179,6 +184,7 @@ export function providerForPath(url) {
   // `new URL()` folds to a Codex path before sending it — does not classify as
   // Codex at all, so it draws the wrong pool's credential.
   const path = classificationPath(url);
+  if (path === '/v1/responses' || path.startsWith('/v1/responses/')) return 'openai';
   return CODEX_PATHS.some(p => path === p || path.startsWith(`${p}/`))
     ? 'codex'
     : DEFAULT_PROVIDER;
@@ -199,9 +205,10 @@ export function providerForPath(url) {
  */
 export function applyAuthHeaders(headers, account) {
   const provider = providerOf(account);
-  if (provider === 'codex') {
+  delete headers['chatgpt-account-id'];
+  if (provider === 'codex' || provider === 'openai') {
     headers['authorization'] = `Bearer ${account.credential}`;
-    if (account.accountId) headers['chatgpt-account-id'] = account.accountId;
+    if (provider === 'codex' && account.accountId) headers['chatgpt-account-id'] = account.accountId;
     return;
   }
   if (account.type === 'oauth') {

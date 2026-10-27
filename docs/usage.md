@@ -23,7 +23,7 @@ docker run -d --name relaycrew -p 3456:3456 \
   -v ~/.config/relaycrew.json:/data/relaycrew.json \
   ghcr.io/karpeleslab/teamclaude:latest
 
-docker exec -it relaycrew relaycrew login --token   # add accounts from inside
+docker exec -it relaycrew relaycrew login --claude --token   # add accounts from inside
 docker exec -it relaycrew relaycrew status
 ```
 

@@ -26,7 +26,7 @@ import {
 import { resolveAccounts } from './resolve-accounts.js';
 import { loginCodex, startCodexLogin } from './codex-auth.js';
 import { isRemoteSession, openBrowser, PANEL_LOGIN_TIMEOUT_MS } from './login-flow.js';
-import { providerOf } from './provider.js';
+import { providerOf, PROVIDERS } from './provider.js';
 import { syncAccountsFromDisk } from './sync-accounts.js';
 import { mergeAccountsForSave, syncRefreshedTokens, removedAccountIds, clearRemovedAccountIds, clearAddedAccountIds, markAccountRemoved, configIndexFor } from './account-pairing.js';
 import { ensureAccountIds, accountIdsComplete } from './account-id.js';
@@ -350,7 +350,8 @@ async function serverCommand() {
     console.error('Add an account first:');
     console.error('  relaycrew import           Import from Claude Code');
     console.error('  relaycrew login            OAuth login via browser');
-    console.error('  relaycrew login --api      Add an API key (last resort by default; --priority <n>)');
+    console.error('  relaycrew login --claude-api  Add an Anthropic API key (--priority <n> to place it)');
+    console.error('  relaycrew login --openai-api  Add an OpenAI Responses API key');
     console.error('  relaycrew callback login   Sign in to callback.net and take the accounts of your other installs');
     process.exit(1);
   }
@@ -1267,6 +1268,7 @@ async function loginCodexCommand() {
   }
 
   await upsertCodexAccount(argValue('--name'), creds, routing, store);
+  await notifyRunningServer(await loadConfig());
 }
 
 /**
@@ -1337,21 +1339,23 @@ async function upsertCodexAccount(requestedName, creds, routing = null, storeRou
 }
 
 async function loginCommand() {
-  if (args.includes('--api')) {
-    await loginApiCommand();
-    return;
+  if (args.includes('--help')) return showHelp();
+  const flags = {
+    '--claude': 'claude', '--oauth': 'claude', '--token': 'claude',
+    '--codex': 'codex',
+    '--claude-api': 'claude-api', '--api': 'claude-api',
+    '--openai-api': 'openai-api',
+  };
+  const methods = [...new Set(Object.entries(flags).filter(([flag]) => args.includes(flag)).map(([, method]) => method))];
+  if (methods.length > 1) {
+    console.error('Choose only one login method: --claude, --codex, --claude-api, or --openai-api. --token applies only to Claude.');
+    process.exit(1);
   }
-  if (args.includes('--token')) {
-    await loginOAuthCommand({ pasteOnly: true });
-    return;
-  }
-  if (args.includes('--oauth')) {
-    await loginOAuthCommand();
-    return;
-  }
-  if (args.includes('--codex')) {
-    await loginCodexCommand();
-    return;
+  switch (methods[0]) {
+    case 'claude': return loginOAuthCommand({ pasteOnly: args.includes('--token') });
+    case 'codex': return loginCodexCommand();
+    case 'claude-api': return loginApiCommand();
+    case 'openai-api': return loginApiCommand('openai');
   }
 
   // Default to OAuth if not a TTY
@@ -1366,6 +1370,7 @@ async function loginCommand() {
   console.log('  1. Claude subscription  (Pro, Max, Team, Enterprise)');
   console.log('  2. Anthropic API key    (Console API billing)');
   console.log('  3. Codex subscription   (ChatGPT Plus, Pro, Team)');
+  console.log('  4. OpenAI API key       (API platform billing)');
   console.log('');
   const choice = await new Promise(resolve => rl.question('Choice [1]: ', resolve));
   rl.close();
@@ -1374,13 +1379,15 @@ async function loginCommand() {
     case '3': await loginCodexCommand(); break;
     case '1': await loginOAuthCommand(); break;
     case '2': await loginApiCommand(); break;
+    case '4': await loginApiCommand('openai'); break;
     default:
       console.error(`Invalid choice: ${choice.trim()}`);
       process.exit(1);
   }
 }
 
-async function loginApiCommand() {
+/** @param {'anthropic'|'openai'} [provider] */
+async function loginApiCommand(provider = 'anthropic') {
   const loaded = await loadOrCreateConfig(); // first run: create the file; the save re-reads it
   let name = argValue('--name');
   // `--priority 0` puts the key level with the subscriptions, which is what an
@@ -1395,10 +1402,10 @@ async function loginApiCommand() {
   // routing for it to borrow (and `none` is what it gets without the flag).
   const { routing } = routingFlag();
   refuseSelfRouting(routing, loaded);
-  await requireWorkingRouting(routing, upstreamFor({ type: 'apikey' }, loaded.upstream));
+  await requireWorkingRouting(routing, upstreamFor({ type: 'apikey', provider }, loaded.upstream));
 
   const rl = createInterface({ input: process.stdin, output: process.stderr });
-  const apiKey = await new Promise(resolve => rl.question('Anthropic API key: ', resolve));
+  const apiKey = await new Promise(resolve => rl.question(`${PROVIDERS[provider].label} API key: `, resolve));
   rl.close();
 
   if (!apiKey.trim()) {
@@ -1412,11 +1419,13 @@ async function loginApiCommand() {
   // lose that account on its next restart, so the row is added to a fresh read.
   const config = await atomicConfigUpdate(disk => {
     if (!name) {
-      const n = disk.accounts.filter(a => a.name.startsWith('api-')).length + 1;
-      name = `api-${n}`;
+      const prefix = provider === 'openai' ? 'openai-' : 'api-';
+      const n = disk.accounts.filter(a => a.name.startsWith(prefix)).length + 1;
+      name = `${prefix}${n}`;
     }
     disk.accounts.push({
       name, type: 'apikey', apiKey: apiKey.trim(), priority,
+      ...(provider === 'openai' ? { provider } : {}),
       ...(routing ? { routing: routingToUrl(routing) } : {}),
     });
   });
@@ -1449,7 +1458,7 @@ async function loginOAuthCommand({ pasteOnly = false } = {}) {
     console.error('');
     console.error('Alternatives:');
     console.error('  relaycrew import        Import from existing Claude Code credentials');
-    console.error('  relaycrew login --api   Add an API key instead');
+    console.error('  relaycrew login --claude-api   Add an Anthropic API key instead');
     process.exit(1);
   }
 
@@ -1962,7 +1971,7 @@ async function accountsCommand() {
 
   if (config.accounts.length === 0) {
     console.log('No accounts configured.');
-    console.log('Add one with: relaycrew import, relaycrew login, or relaycrew login --api');
+    console.log('Add one with: relaycrew import, or relaycrew login --claude, --codex, --claude-api, or --openai-api');
     return;
   }
 
@@ -2850,12 +2859,16 @@ Usage: relaycrew [command] [options]
 Commands:
   server              Start the proxy server (default; --headless to skip the TUI)
   import              Import credentials from Claude Code
-  login               OAuth login via browser (over SSH: copy/paste, as --token)
-  login --token       OAuth login via copy/paste (no local callback; for headless/remote)
+  login               Choose a login method (noninteractive: Claude subscription)
+  login --claude      Claude subscription login (over SSH: copy/paste)
   login --codex       Codex (ChatGPT) login via browser; on a terminal the address
                       the browser lands on can be pasted instead (--no-browser)
-  login --api         Add an API key account (a last resort by default:
-                      --priority <n> to place it, 0 = level with the rest)
+  login --claude-api  Add an Anthropic API key
+  login --openai-api  Add an OpenAI API key for /v1/responses
+                      API keys join at priority 100; --priority <n> places them
+  login --token       Alias for --claude with copy/paste only (no local callback)
+  login --oauth       Alias for --claude
+  login --api         Alias for --claude-api
   env [--mitm|--no-mitm]
                       Print export lines to point Claude Code at the proxy, for
                       'eval "$(relaycrew env)"'. MITM forward-proxy unless the

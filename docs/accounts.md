@@ -2,15 +2,26 @@
 
 Adding, naming, and managing the accounts RelayCrew rotates between.
 
-## OAuth login (recommended)
+Choose a login method explicitly:
+
+| Command | Credential |
+| --- | --- |
+| `relaycrew login --claude` | Claude subscription authorization |
+| `relaycrew login --codex` | ChatGPT/Codex subscription authorization |
+| `relaycrew login --claude-api` | Anthropic API key |
+| `relaycrew login --openai-api` | OpenAI API key for Responses requests |
+
+`--oauth` remains an alias for `--claude`, and `--api` remains an alias for `--claude-api`. Standalone `--token` keeps the Claude copy-and-paste flow. Combine `--claude --token` to select that flow explicitly. Conflicting login methods are rejected. Without a method, an interactive terminal shows the login menu; a noninteractive invocation defaults to Claude authorization.
+
+## Claude subscription login
 
 ```bash
-relaycrew login
+relaycrew login --claude
 ```
 
 Opens your browser and uses the same OAuth flow as Claude Code. Auto-detects the account email and subscription tier. Logging in with the same account again updates its credentials.
 
-The browser is sent back to a listener on this machine, so it has to run here. On a terminal the command also prints a second link, which works from any device: open it there, sign in, and paste the code the page shows at the prompt. Whichever arrives first is used. Over SSH, or on Linux with no display (`DISPLAY`/`WAYLAND_DISPLAY` unset), no browser is opened and the paste is the whole flow, the same as `relaycrew login --token`.
+The browser is sent back to a listener on this machine, so it has to run here. On a terminal the command also prints a second link, which works from any device: open it there, sign in, and paste the code the page shows at the prompt. Whichever arrives first is used. Over SSH, or on Linux with no display (`DISPLAY`/`WAYLAND_DISPLAY` unset), no browser is opened and the paste is the whole flow, the same as `relaycrew login --claude --token`.
 
 Run it once per account. You can add accounts while the server is running — press **R** in the TUI to reload.
 
@@ -53,17 +64,31 @@ Instead of storing an OAuth account's tokens in `relaycrew.json`, an account ent
 
 The tokens (`accessToken`, `refreshToken`, `expiresAt`) are read from that file at startup and again on every config reload, so a login refreshed by Claude Code itself is picked up without re-running `relaycrew import`. Every other field on the entry (`priority`, `disabled`, `upstream`, `modelMap`, …) is kept as written. A file with no token skips the account with a message rather than sending an empty credential upstream. `relaycrew import` is the alternative: it copies the tokens into the config once.
 
-## API key
+## Anthropic API key
 
 For Anthropic API key accounts (billed via Console):
 
 ```bash
-relaycrew login --api
+relaycrew login --claude-api
 ```
 
 A key is **metered** — every token it serves is billed — while a subscription's quota is paid for whether it is spent or not. So a key is added at `priority: 100`, the fallback tier: rotation reaches it only when every account ahead of it is spent, and leaves it the moment one of them has quota again (a higher-priority account preempts on the next selection, so a reset elsewhere moves traffic back off the key). Pass `--priority <n>` to place it yourself; `--priority 0` puts it level with the subscriptions, which is where an added key sat before 1.1.23. A key already in the config keeps whatever priority it has: `relaycrew priority <name> 100` (or `--last`) moves it to the back.
 
-### When the key is rejected (401)
+## OpenAI API key
+
+To add a platform API key, run:
+
+```bash
+relaycrew login --openai-api
+```
+
+The command prompts for the key and saves an account with `type: "apikey"` and `provider: "openai"`. It uses `https://api.openai.com` and Bearer authentication, as described in the [OpenAI API authentication reference](https://developers.openai.com/api/reference/overview#authentication). The gateway injects this credential on the server. Developers keep using their individual gateway keys.
+
+Native OpenAI API keys serve HTTP Responses requests at `/v1/responses` and `/v1/responses/compact`. Set the requested model explicitly. The shared `/v1/models` path retains its existing Anthropic behavior; automatic OpenAI model discovery and Chat Completions are outside this integration. These keys do not serve Claude or ChatGPT subscription requests, and there is no protocol conversion.
+
+New keys use priority 100 unless `--priority` selects another tier. Streaming and non-streaming Responses pass through without Anthropic body rewrites. Subscription quota probes do not apply to platform API keys. Existing generic API-key backends retain their cross-provider routing behavior.
+
+## When an API key is rejected (401)
 
 A 401 on an API-key account never reaches the client. The request fails over to the next account, and the account that answered it is held out of rotation for a cooldown, then tried again. It is not benched for good, because a 401 does not always mean the key is bad: a gateway such as LiteLLM, set as the account's `upstream`, can answer one while its own upstream is unreachable.
 

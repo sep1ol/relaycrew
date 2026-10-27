@@ -31,7 +31,7 @@ test('the request path selects the provider', () => {
   assert.equal(providerForPath('/backend-api/codex/models?client_version=0.150.1'), 'codex');
   // The OpenAI *API platform* paths are not Codex's: a ChatGPT token is
   // rejected there, so they must not be routed to a Codex account.
-  assert.equal(providerForPath('/v1/responses'), 'anthropic');
+  assert.equal(providerForPath('/v1/responses'), 'openai');
   // Anything unrecognised stays Anthropic's, so a config with no Codex
   // accounts routes exactly as it did before.
   assert.equal(providerForPath('/v1/complete'), 'anthropic');
