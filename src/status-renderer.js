@@ -221,9 +221,10 @@ export function spendLine(account, paint) {
  * with toString(), so the terminal and the browser say the same thing.
  *
  * @param {Record<string, {share: number|null, state: string, since: string|null}>|null|undefined} outsideSpend
+ * @param {import('./dashboard-translations.js').DashboardI18n} [i18n]
  * @returns {string|null}
  */
-export function outsideSpendText(outsideSpend) {
+export function outsideSpendText(outsideSpend, i18n) {
   var o = outsideSpend || {};
   var keys = Object.keys(o).sort(function (a, b) {
     if (a === 'unified7d') return -1;
@@ -239,6 +240,12 @@ export function outsideSpendText(outsideSpend) {
       : key === 'unified7dSonnet' ? 'sonnet'
       : key.indexOf('scoped:') === 0 ? key.slice(7) : key;
     var label = family ? family.charAt(0).toUpperCase() + family.slice(1) + ' week' : 'week';
+    if (i18n) {
+      var window = family ? i18n.t('{model} week', { model: family.charAt(0).toUpperCase() + family.slice(1) }) : i18n.t('week');
+      if (v.state === 'measured' && typeof v.share === 'number') return i18n.t('{percent} of the {window} went elsewhere', { percent: i18n.number(v.share, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }), window: window });
+      if (v.state === 'not_measurable') return i18n.t('{window}: not measurable', { window: window });
+      return i18n.t('{window}: not observed (quota probe off?)', { window: window });
+    }
     if (v.state === 'measured' && typeof v.share === 'number') {
       return (Math.round(v.share * 1000) / 10).toFixed(1) + '% of the ' + label + ' went elsewhere';
     }
@@ -265,18 +272,20 @@ export function outsideSpendText(outsideSpend) {
  *
  * @param {Record<string, {ratePerHour?: number|null, threshold?: number, reachesThresholdAt?: number|null, resetAt?: number|null}>|null|undefined} forecast
  * @param {number} now  ms epoch
+ * @param {import('./dashboard-translations.js').DashboardI18n} [i18n]
  * @returns {string|null}
  */
-export function forecastText(forecast, now) {
+export function forecastText(forecast, now, i18n) {
   var f = forecast || {};
   /** @param {number} ms */
   var dur = function (ms) {
     var minutes = Math.max(1, Math.round(ms / 60000));
-    if (minutes < 60) return minutes + 'm';
+    if (minutes < 60) return i18n ? i18n.number(minutes, { style: 'unit', unit: 'minute', unitDisplay: 'narrow' }) : minutes + 'm';
     var hours = Math.round(minutes / 60);
-    if (hours < 48) return hours + 'h';
+    if (hours < 48) return i18n ? i18n.number(hours, { style: 'unit', unit: 'hour', unitDisplay: 'narrow' }) : hours + 'h';
     var days = Math.floor(hours / 24);
     var rem = hours % 24;
+    if (i18n) return i18n.number(days, { style: 'unit', unit: 'day', unitDisplay: 'narrow' }) + (rem ? ' ' + i18n.number(rem, { style: 'unit', unit: 'hour', unitDisplay: 'narrow' }) : '');
     return rem ? days + 'd' + rem + 'h' : days + 'd';
   };
   var keys = Object.keys(f).sort(function (a, b) {
@@ -300,6 +309,16 @@ export function forecastText(forecast, now) {
     var pct = typeof v.threshold === 'number' ? Math.round(v.threshold * 100) + '%' : 'its threshold';
     var reach = dur(at - now);
     var resetText = reset != null ? dur(reset - now) : null;
+    if (i18n) {
+      var window = family ? i18n.t('{model} week', { model: family.charAt(0).toUpperCase() + family.slice(1) }) : i18n.t('week');
+      var threshold = typeof v.threshold === 'number' ? i18n.number(v.threshold, { style: 'percent', maximumFractionDigits: 0 }) : i18n.t('its threshold');
+      parts.push(resetText === null
+        ? i18n.t('{window} reaches {percent} in ~{duration}', { window: window, percent: threshold, duration: reach })
+        : resetText === reach
+          ? i18n.t('{window} reaches {percent} in ~{duration}, just before it resets', { window: window, percent: threshold, duration: reach })
+          : i18n.t('{window} reaches {percent} in ~{duration}, resets in {reset}', { window: window, percent: threshold, duration: reach, reset: resetText }));
+      continue;
+    }
     // Rounded separately, the two can print alike; the threshold still comes first.
     parts.push(label + ' reaches ' + pct + ' in ~' + reach
       + (resetText == null ? '' : resetText === reach ? ', just before it resets' : ', resets in ' + resetText));

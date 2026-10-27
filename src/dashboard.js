@@ -17,8 +17,41 @@
 import { createHash } from 'node:crypto';
 import { WORKSPACE_HTML, WORKSPACE_CSS } from './dashboard-shell.js';
 import { WORKSPACE_SCRIPT } from './dashboard-workspace.js';
-import { UNAVAILABLE_TEXT, RESET_CREDIT_MAX_AGE_MS, outsideSpendText, forecastText, showSessionRow, showWeeklyRow } from './status-renderer.js';
+import { I18N_SCRIPT } from './dashboard-translations.js';
+import { RESET_CREDIT_MAX_AGE_MS, outsideSpendText, forecastText, showSessionRow, showWeeklyRow } from './status-renderer.js';
 import { USAGE_WINDOWS } from './client-usage.js';
+
+/** @typedef {import('./dashboard-translations.js').DashboardI18n} DashboardI18n */
+
+/** @param {string} id @param {Record<string, string|number>} [values] */
+function dashboardText(id, values) {
+  return id.replace(/\{([A-Za-z0-9_]+)\}/g, function (match, key) {
+    return values && Object.hasOwn(values, key) ? String(values[key]) : match;
+  });
+}
+
+/** @param {string} status @param {DashboardI18n} [i18n] */
+function accountStatusText(status, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
+  /** @type {Record<string, string>} */
+  var labels = { active: t('active'), disabled: t('disabled'), unknown: t('unknown'), throttled: t('throttled'), exhausted: t('exhausted'), error: t('error') };
+  return Object.hasOwn(labels, status) ? labels[status] : status;
+}
+
+/** @param {string} reason @param {DashboardI18n} i18n */
+function unavailableText(reason, i18n) {
+  var t = i18n.t;
+  /** @type {Record<string, string>} */
+  var labels = {
+    disabled: t('disabled by operator'), throttled: t('upstream 429 hold'), exhausted: t('marked exhausted'), error: t('account error (see logs)'),
+    'upstream-rejected': t('upstream reports quota rejected'), quota: t('local switch threshold reached'), capped: t('account usage cap reached (maxUsage)'),
+    'spend-capped': t('extra-usage spend cap reached (maxSpend)'), 'advisor-capped': t("advisor model's usage cap reached (maxUsage)"),
+    entitlement: t('upstream refused this account for the organization (cooldown)'), routing: t("the account's routing proxy is unreachable (cooldown)"),
+    credential: t('upstream rejected its API key with a 401 (cooldown, then retried)'), route: t('no route allows this account'),
+    'advisor-quota': t("advisor model's weekly bucket spent"), 'advisor-route': t('no route allows the advisor model')
+  };
+  return Object.hasOwn(labels, reason) ? labels[reason] : reason;
+}
 
 export function renderDashboardHtml() {
   return PAGE;
@@ -102,20 +135,21 @@ export function scopedWeeklyRows(quota) {
 // alone. A window past its reset is left out — the reading predates the reset,
 // so its fraction no longer describes anything. `text` is what is left to say
 // when no bar can be drawn: a balance has no fraction to fill a bar with.
-/** @param {any} backend @param {number} [now] */
-export function backendQuotaRows(backend, now) {
+/** @param {any} backend @param {number} [now] @param {DashboardI18n} [i18n] */
+export function backendQuotaRows(backend, now, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
   var b = backend || {};
   var at = now == null ? Date.now() : now;
   var w = b.windows || {};
   var rows = [];
-  [{ key: 'fiveHour', label: 'Session' }, { key: 'weekly', label: 'Weekly' }, { key: 'monthly', label: 'Monthly' }].forEach(function (d) {
+  [{ key: 'fiveHour', label: t('Session') }, { key: 'weekly', label: t('Weekly') }, { key: 'monthly', label: t('Monthly') }].forEach(function (d) {
     var win = w[d.key];
     if (!win || win.utilization == null) return;
     if (win.resetAt != null && win.resetAt <= at) return;
     rows.push({ label: d.label, utilization: win.utilization, resetAt: win.resetAt == null ? null : win.resetAt });
   });
-  if (!rows.length && b.utilization != null) rows.push({ label: b.label || 'Quota', utilization: b.utilization, resetAt: null });
-  return { rows: rows, text: !rows.length && b.text ? (b.label || 'Quota') + ': ' + b.text : null };
+  if (!rows.length && b.utilization != null) rows.push({ label: b.label || t('Quota'), utilization: b.utilization, resetAt: null });
+  return { rows: rows, text: !rows.length && b.text ? (b.label || t('Quota')) + ': ' + b.text : null };
 }
 
 // What an account has spent, cache included. `totalInputTokens` counts uncached
@@ -162,11 +196,13 @@ export function recentModelLabels(/** @type {any} */ usage, /** @type {number} *
   return (main.length ? main : ids).slice(0, 3).map(modelLabel);
 }
 
-export function providerLabel(provider) {
+/** @param {string} provider @param {DashboardI18n} [i18n] */
+export function providerLabel(provider, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
   if (provider === 'codex') return 'Codex';
   if (provider === 'anthropic') return 'Claude';
   if (provider === 'openai') return 'OpenAI API';
-  return provider || 'Unknown';
+  return provider || t('Unknown');
 }
 
 // Every bucket switchThreshold can be keyed by, plus the short names the
@@ -195,8 +231,10 @@ export var THRESHOLD_BUCKET_LABELS = {
  * @param {number|null|undefined} fleetThreshold
  * @param {Object<string, number>|null|undefined} fleetThresholds
  * @returns {string}
+ * @param {DashboardI18n} [i18n]
  */
-export function thresholdBadgeText(accountThreshold, fleetThreshold, fleetThresholds) {
+export function thresholdBadgeText(accountThreshold, fleetThreshold, fleetThresholds, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
   /** @param {string} bucket */
   function fleetFor(bucket) {
     if (fleetThresholds && typeof fleetThresholds === 'object') {
@@ -207,7 +245,7 @@ export function thresholdBadgeText(accountThreshold, fleetThreshold, fleetThresh
     return typeof fleetThreshold === 'number' && isFinite(fleetThreshold) ? fleetThreshold : 0.98;
   }
   /** @param {number} v */
-  function pct(v) { return (Math.round(v * 1000) / 10) + '%'; }
+  function pct(v) { return i18n ? i18n.number(v, { style: 'percent', maximumFractionDigits: 1 }) : (Math.round(v * 1000) / 10) + '%'; }
   /** @param {unknown} v */
   function valid(v) { return typeof v === 'number' && isFinite(v); }
   /** @type {string[]} */
@@ -219,7 +257,7 @@ export function thresholdBadgeText(accountThreshold, fleetThreshold, fleetThresh
   if (typeof accountThreshold === 'number') {
     if (!valid(accountThreshold)) return '';
     ownDefault = accountThreshold;
-    if (accountThreshold !== fleetFor('default')) parts.push('at ' + pct(accountThreshold));
+    if (accountThreshold !== fleetFor('default')) parts.push(t('at {percent}', { percent: pct(accountThreshold) }));
   } else if (accountThreshold && typeof accountThreshold === 'object' && !Array.isArray(accountThreshold)) {
     table = accountThreshold;
     ownDefault = table.default;
@@ -227,7 +265,7 @@ export function thresholdBadgeText(accountThreshold, fleetThreshold, fleetThresh
       var v = table[key];
       if (!valid(v)) return;
       if (key !== 'default' && THRESHOLD_BUCKET_KEYS.indexOf(key) === -1) return;
-      if (v !== fleetFor(key)) parts.push((key === 'default' ? 'at' : (THRESHOLD_BUCKET_LABELS[key] || key)) + ' ' + pct(v));
+      if (v !== fleetFor(key)) parts.push((key === 'default' ? t('at') : bucketLabel(key)) + ' ' + pct(v));
     });
   }
   // As switchThresholdDiffs in model.js: the account's own default outranks a
@@ -238,10 +276,12 @@ export function thresholdBadgeText(accountThreshold, fleetThreshold, fleetThresh
   if (valid(ownDefault) && ownDefault === fleetFor('default')) {
     THRESHOLD_BUCKET_KEYS.forEach(function (key) {
       if (valid(table[key])) return;
-      if (ownDefault !== fleetFor(key)) parts.push(THRESHOLD_BUCKET_LABELS[key] + ' ' + pct(ownDefault));
+      if (ownDefault !== fleetFor(key)) parts.push(bucketLabel(key) + ' ' + pct(ownDefault));
     });
   }
-  return parts.length ? 'switch ' + parts.join(', ') : '';
+  return parts.length ? t('switch {thresholds}', { thresholds: parts.join(', ') }) : '';
+  /** @param {string} key */
+  function bucketLabel(key) { return key === 'tokens' ? t('tokens') : key === 'requests' ? t('requests') : THRESHOLD_BUCKET_LABELS[key] || key; }
 }
 
 /**
@@ -253,8 +293,11 @@ export function thresholdBadgeText(accountThreshold, fleetThreshold, fleetThresh
  * @param {number|null} [now]  ms epoch a reset-credit reading's age is measured from
  * @param {number|null|undefined} [fleetThreshold]
  * @param {Object<string, number>|null|undefined} [fleetThresholds]
+ * @param {DashboardI18n} [i18n]
  */
-export function accountBadges(account, current, currentAccounts, now, fleetThreshold, fleetThresholds) {
+export function accountBadges(account, current, currentAccounts, now, fleetThreshold, fleetThresholds, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
+  var num = /** @param {number} value */ function (value) { return i18n ? i18n.number(value) : String(value); };
   var a = account || {};
   var isCurrent = currentAccounts
     ? currentAccounts[a.provider] === a.name
@@ -263,14 +306,14 @@ export function accountBadges(account, current, currentAccounts, now, fleetThres
   var recent = Number.isFinite(a.sessions) ? a.sessions : 0;
   var known = Number.isFinite(a.knownSessions) ? a.knownSessions : 0;
   var badges = [
-    { cls: 'provider ' + (a.provider || 'unknown'), text: providerLabel(a.provider) },
-    { cls: 'meta', text: a.type || 'unknown' },
-    { cls: 'meta priority', text: 'prio ' + (a.priority || 0) },
+    { cls: 'provider ' + (a.provider || 'unknown'), text: providerLabel(a.provider, i18n) },
+    { cls: 'meta', text: a.type || t('unknown') },
+    { cls: 'meta priority', text: t('prio {priority}', { priority: num(a.priority || 0) }) },
   ];
-  if (isCurrent) badges.push({ cls: 'current', text: 'current' });
-  badges.push({ cls: status, text: status });
-  if (recent) badges.push({ cls: 'sessions', text: recent + ' recent' });
-  if (known > recent) badges.push({ cls: 'sessions known', text: known + ' known' });
+  if (isCurrent) badges.push({ cls: 'current', text: t('current') });
+  badges.push({ cls: status, text: accountStatusText(status, i18n) });
+  if (recent) badges.push({ cls: 'sessions', text: t('{count} recent', { count: num(recent) }) });
+  if (known > recent) badges.push({ cls: 'sessions known', text: t('{count} known', { count: num(known) }) });
   // Free Codex rate-limit reset credits this account holds — what it could
   // spend to undo an exhausted window rather than wait one out. The count is
   // the account's holdings, not what upstream would apply this instant.
@@ -286,9 +329,9 @@ export function accountBadges(account, current, currentAccounts, now, fleetThres
   var expired = Number.isFinite(reading.expiresAt) && reading.expiresAt <= at;
   if (Number.isFinite(credits) && credits > 0 && !stale && !expired) {
     var expires = Number.isFinite(reading.expiresAt)
-      ? ' \u00b7 expires ' + new Date(reading.expiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      ? ' \u00b7 ' + t('expires {date}', { date: i18n ? i18n.date(reading.expiresAt, { month: 'short', day: 'numeric' }) : new Date(reading.expiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) })
       : '';
-    badges.push({ cls: 'meta', text: credits + ' reset credit' + (credits === 1 ? '' : 's') + expires });
+    badges.push({ cls: 'meta', text: (credits === 1 ? t('{count} reset credit', { count: num(credits) }) : t('{count} reset credits', { count: num(credits) })) + expires });
   }
   // Arguments 5/6 are optional (the pre-#409 unit test above omits them): with
   // no account switchThreshold at all — the common case — thresholdBadgeText
@@ -296,16 +339,16 @@ export function accountBadges(account, current, currentAccounts, now, fleetThres
   // new badge. A caller that DOES set switchThreshold on the account is
   // expected to pass the fleet's own value too, the way `render()` does below,
   // or the comparison falls back to thresholdBadgeText's own 0.98 default.
-  var thresholdText = thresholdBadgeText(a.switchThreshold, fleetThreshold, fleetThresholds);
+  var thresholdText = thresholdBadgeText(a.switchThreshold, fleetThreshold, fleetThresholds, i18n);
   if (thresholdText) badges.push({ cls: 'meta threshold', text: thresholdText });
   // Extra-usage fallback: one badge, the louder state winning. Strict `true`
   // so a missing field on an older server's payload shows nothing.
-  if (a.onExtraUsage === true) badges.push({ cls: 'extra-usage billing', text: 'on extra usage \u2014 billing' });
-  else if (a.allowExtraUsage === true) badges.push({ cls: 'extra-usage', text: 'extra usage allowed' });
+  if (a.onExtraUsage === true) badges.push({ cls: 'extra-usage billing', text: t('on extra usage — billing') });
+  else if (a.allowExtraUsage === true) badges.push({ cls: 'extra-usage', text: t('extra usage allowed') });
   // The account's own egress proxy, as the status payload carries it: already
   // password-masked (describeRouting), and absent for an account on the fleet
   // path, which is the default and earns no badge.
-  if (typeof a.routing === 'string' && a.routing) badges.push({ cls: 'meta routing', text: 'via ' + a.routing });
+  if (typeof a.routing === 'string' && a.routing) badges.push({ cls: 'meta routing', text: t('via {routing}', { routing: a.routing }) });
   return badges;
 }
 
@@ -358,10 +401,11 @@ export function sessionRows(sessions) {
 
 // "pinned: 3f2a1b9c → api-1, 9d0e4c11 → work" — the sessions an operator held
 // on one account (`relaycrew switch --session`), or '' when there are none.
-/** @param {any} pins */
-export function sessionPinsText(pins) {
+/** @param {any} pins @param {DashboardI18n} [i18n] */
+export function sessionPinsText(pins, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
   if (!Array.isArray(pins) || !pins.length) return '';
-  return 'pinned: ' + pins.map(function (p) { return (p && p.session || '?') + ' \u2192 ' + (p && p.account || '?'); }).join(', ');
+  return t('pinned: {pins}', { pins: pins.map(function (p) { return (p && p.session || '?') + ' \u2192 ' + (p && p.account || '?'); }).join(', ') });
 }
 
 export function filterSessionRows(rows, filters) {
@@ -443,13 +487,15 @@ export function thresholdPercentText(value) {
 /**
  * @param {any} res
  * @returns {{ kind: string, text: string }}
+ * @param {DashboardI18n} [i18n]
  */
-export function thresholdOutcome(res) {
-  if (!res || !res.ok) return { kind: 'error', text: 'threshold change failed' + (res && res.error ? ': ' + res.error : '') };
-  var pct = thresholdPercentText(res.switchThreshold);
+export function thresholdOutcome(res, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
+  if (!res || !res.ok) return { kind: 'error', text: t('threshold change failed{error}', { error: res && res.error ? ': ' + res.error : '' }) };
+  var pct = i18n ? i18n.number(Number(thresholdPercentText(res.switchThreshold))) : thresholdPercentText(res.switchThreshold);
   var dropped = res.dropped || [];
-  if (dropped.length) return { kind: 'warn', text: 'switch threshold set to ' + pct + '% — dropped the per-bucket thresholds (' + dropped.join(', ') + ')' };
-  return { kind: 'ok', text: 'switch threshold set to ' + pct + '%' };
+  if (dropped.length) return { kind: 'warn', text: t('switch threshold set to {percent}% — dropped the per-bucket thresholds ({buckets})', { percent: pct, buckets: dropped.join(', ') }) };
+  return { kind: 'ok', text: t('switch threshold set to {percent}%', { percent: pct }) };
 }
 
 // What to tell the operator afterwards. The endpoint answers `ok` for the choice
@@ -490,13 +536,15 @@ export function accountControlRequest(name, spec, key) {
  *
  * @param {any} res
  * @param {{ place?: string, priority?: number, disabled?: boolean }} spec
+ * @param {DashboardI18n} [i18n]
  */
-export function accountControlOutcome(res, spec) {
-  if (!res || !res.ok) return { kind: 'error', text: 'change failed' + (res && res.error ? ': ' + res.error : '') };
+export function accountControlOutcome(res, spec, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
+  if (!res || !res.ok) return { kind: 'error', text: t('change failed{error}', { error: res && res.error ? ': ' + res.error : '' }) };
   if (spec.disabled !== undefined) {
-    return { kind: 'ok', text: (res.disabled ? 'disabled ' : 'enabled ') + res.name };
+    return { kind: 'ok', text: res.disabled ? t('disabled {name}', { name: res.name }) : t('enabled {name}', { name: res.name }) };
   }
-  return { kind: 'ok', text: res.name + ' priority ' + res.priority };
+  return { kind: 'ok', text: t('{name} priority {priority}', { name: res.name, priority: i18n ? i18n.number(res.priority) : res.priority }) };
 }
 
 /**
@@ -516,10 +564,12 @@ export function callerCan(caller, path) {
  * hidden. Said once at the top instead of on every card.
  *
  * @param {any} caller  status.caller
+ * @param {DashboardI18n} [i18n]
  */
-export function callerNotice(caller) {
+export function callerNotice(caller, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
   if (!caller || !Array.isArray(caller.refused) || !caller.refused.length) return null;
-  return 'Signed in with the client key "' + caller.client + '". Changes to accounts and settings need the proxy key (proxy.apiKey), or the page opened without a key on the proxy\'s own machine, so those controls are hidden.';
+  return t('Signed in with the client key "{client}". Changes to accounts and settings need the proxy key (proxy.apiKey), or the page opened without a key on the proxy\'s own machine, so those controls are hidden.', { client: caller.client });
 }
 
 /**
@@ -547,10 +597,12 @@ export function cardNoteFor(notes, key, now) {
   return n;
 }
 
-export function switchOutcome(res) {
-  if (!res || !res.ok) return { kind: 'error', text: 'switch failed' + (res && res.error ? ': ' + res.error : '') };
-  if (res.eligible === false) return { kind: 'warn', text: 'switched to ' + res.account + ', but rotation will not use it' + (res.reason ? ': ' + res.reason : '') };
-  return { kind: 'ok', text: 'switched to ' + res.account };
+/** @param {any} res @param {DashboardI18n} [i18n] */
+export function switchOutcome(res, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
+  if (!res || !res.ok) return { kind: 'error', text: t('switch failed{error}', { error: res && res.error ? ': ' + res.error : '' }) };
+  if (res.eligible === false) return { kind: 'warn', text: t('switched to {account}, but rotation will not use it{reason}', { account: res.account, reason: res.reason ? ': ' + res.reason : '' }) };
+  return { kind: 'ok', text: t('switched to {account}', { account: res.account }) };
 }
 
 // One row per route the server reports — each model family the fleet meters
@@ -559,7 +611,9 @@ export function switchOutcome(res) {
 // to "where does a request for this family land right now", so the page does
 // not re-derive routing from quota bars; the eligible split says why a family
 // is where it is.
-export function routeRows(status) {
+/** @param {any} status @param {DashboardI18n} [i18n] */
+export function routeRows(status, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
   var s = status || {};
   var blockedModels = s.blockedModels || [];
   var rows = (s.routes || []).map(function (r) {
@@ -607,7 +661,7 @@ export function routeRows(status) {
       var cur = (s.accounts || []).filter(function (a) { return a.name === current; })[0];
       rows.push({
         kind: 'default', name: '',
-        label: defaults ? providerLabel(provider) + ' default' : 'Everything else',
+        label: defaults ? t('{provider} default', { provider: providerLabel(provider, i18n) }) : t('Everything else'),
         provider: provider, match: '',
         target: defaults ? defaults[provider] : (s.defaultTarget || current), current: current,
         currentUnavailable: (cur && cur.unavailable) || null,
@@ -639,7 +693,10 @@ export var STARVED_LIST_MAX = 3;
  * saying so every day would teach the reader to ignore the banner on the day it
  * matters.
  */
-export function problems(status) {
+/** @param {any} status @param {DashboardI18n} [i18n] */
+export function problems(status, i18n) {
+  var t = i18n ? i18n.t : dashboardText;
+  var num = /** @param {number} value */ function (value) { return i18n ? i18n.number(value) : String(value); };
   var s = status || {};
   var out = [];
 
@@ -652,9 +709,9 @@ export function problems(status) {
   var reasons = {};
   stalled.forEach(function (a) { reasons[a.unavailable] = true; });
   var why = accounts.length && stalled.length === accounts.length
-    ? ' — every account is ' + (reasons.quota && reasons.throttled ? 'over its quota threshold or in a rate-limit hold'
-      : reasons.quota ? 'over its quota threshold' : 'in a rate-limit hold') + '.'
-    : ' — it is failing, not idle.';
+    ? (reasons.quota && reasons.throttled ? t(' — every account is over its quota threshold or in a rate-limit hold.')
+      : reasons.quota ? t(' — every account is over its quota threshold.') : t(' — every account is in a rate-limit hold.'))
+    : t(' — it is failing, not idle.');
 
   var sessions = s.sessions || {};
   var named = (sessions.items ? sessionRows(sessions) : []).filter(function (r) {
@@ -667,16 +724,17 @@ export function problems(status) {
       // and the conversation after it, because a streak belongs to one agent of
       // a fan-out: without it three lines of one session read as the same line
       // three times. Omitted when the record carries no conversation.
-      text: (r.client ? r.client + "'s session " : 'Session ') + r.session.slice(0, 8)
-        + (r.conversation ? ', conversation ' + r.conversation + ',' : '')
-        + ' has had ' + r.starved + ' requests in a row come back with nothing'
-        + (r.project ? ' (' + r.project + ')' : '') + why,
+      text: t('{session}{conversation} has had {count} requests in a row come back with nothing{project}{reason}', {
+        session: r.client ? t("{client}'s session {session}", { client: r.client, session: r.session.slice(0, 8) }) : t('Session {session}', { session: r.session.slice(0, 8) }),
+        conversation: r.conversation ? t(', conversation {conversation},', { conversation: r.conversation }) : '',
+        count: num(r.starved), project: r.project ? ' (' + r.project + ')' : '', reason: why
+      }),
     });
   });
   if (named.length > STARVED_LIST_MAX) {
     out.push({
       severity: 'bad', kind: 'starved-more',
-      text: 'and ' + (named.length - STARVED_LIST_MAX) + ' more conversations are getting nothing back.',
+      text: t('and {count} more conversations are getting nothing back.', { count: num(named.length - STARVED_LIST_MAX) }),
     });
   }
   if (!named.length && (sessions.starvedMax || 0) >= STARVED_MIN) {
@@ -684,8 +742,7 @@ export function problems(status) {
       severity: 'bad', kind: 'starved-session',
       // A conversation, not a session: the streak is counted per conversation,
       // and a session whose other agents are answering fine is not starving.
-      text: 'A conversation has had ' + sessions.starvedMax + ' requests in a row come back with nothing.'
-        + ' Turn on proxy.sessionDetail to see which.',
+      text: t('A conversation has had {count} requests in a row come back with nothing. Turn on proxy.sessionDetail to see which.', { count: num(sessions.starvedMax) }),
     });
   }
 
@@ -693,10 +750,11 @@ export function problems(status) {
   // five-minute cooldown and `upstream-rejected` is upstream's way of saying a
   // shared bucket is spent — both expire on their own, like `quota` and
   // `throttled`, and none of them wants a person.
-  var ATTENTION = { error: 'needs a re-login', disabled: 'is disabled' };
+  /** @type {Record<string, (name: string) => string>} */
+  var ATTENTION = { error: function (name) { return t('Account {name} needs a re-login.', { name: name }); }, disabled: function (name) { return t('Account {name} is disabled.', { name: name }); } };
   (s.accounts || []).forEach(function (a) {
-    var why = ATTENTION[a.unavailable];
-    if (why) out.push({ severity: 'warn', kind: 'account', text: 'Account ' + a.name + ' ' + why + '.' });
+    var why = Object.hasOwn(ATTENTION, a.unavailable) ? ATTENTION[a.unavailable] : null;
+    if (why) out.push({ severity: 'warn', kind: 'account', text: why(a.name) });
   });
 
   // Deliberately no spend line. `usedMinor` is month-to-date overage, so on a
@@ -735,7 +793,7 @@ export function usageFor(entry, view) {
 export const CARD_NOTE_MAX_AGE_MS = 60 * 1000;
 
 const SHARED_HELPERS = [
-  scopedWeeklyRows, accountTokens, modelLabel, recentModelLabels, providerLabel, thresholdBadgeText, accountBadges, sessionRows, sessionPinsText, filterSessionRows, sortRows, uniqSorted,
+  dashboardText, accountStatusText, unavailableText, scopedWeeklyRows, accountTokens, modelLabel, recentModelLabels, providerLabel, thresholdBadgeText, accountBadges, sessionRows, sessionPinsText, filterSessionRows, sortRows, uniqSorted,
   switchRequest, switchOutcome, accountControlRequest, accountControlOutcome, thresholdRequest, thresholdPercentText, thresholdOutcome, routeRows, problems, usageFor,
   outsideSpendText, forecastText, showSessionRow, showWeeklyRow, callerCan, callerNotice, cardNoteKey, cardNoteFor, backendQuotaRows,
 ].map(fn => fn.toString()).join('\n\n');
@@ -756,7 +814,7 @@ const SHARED_CONSTS = [
 ].join('\n');
 
 const PAGE = `<!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -862,15 +920,22 @@ ${WORKSPACE_CSS}
 </head>
 <body>
 ${WORKSPACE_HTML}
+<script>${I18N_SCRIPT}</script>
 <script>${WORKSPACE_SCRIPT}</script>
 <script>
 (function () {
   'use strict';
+  var localStorage = window.RelayStorage;
+  var i18n = window.RelayI18n;
+  var t = i18n.t;
   var KEY = 'relaycrew-dashboard-key';
   var THEME_KEY = 'relaycrew-dashboard-theme';
   var POLL_MS = 5000;
   var timer = null;
   var lastStatus = null;
+  var lastStatusAt = 0;
+  var lastNote = null;
+  var pollError = null;
   var sessionFilters = { project: '', client: '' };
   var sortState = { sessions: { key: 'lastSeen', dir: 'desc' } };
   // The usage window applies to every table the usage trackers feed (Clients
@@ -879,7 +944,12 @@ ${WORKSPACE_HTML}
   // number against the other's. Like the sort, it survives the poll.
   var usageView = 'total';
   var usageButtons = [];
-  var UNAVAILABLE_TEXT = ${JSON.stringify(UNAVAILABLE_TEXT)};
+
+
+
+
+
+
 
 ${SHARED_CONSTS}
 
@@ -893,10 +963,7 @@ ${SHARED_HELPERS}
   }
 
   function fmtNum(n) {
-    n = Number(n) || 0;
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'm';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
-    return String(n);
+    return i18n.number(Number(n) || 0, { notation: 'compact', maximumFractionDigits: 1 });
   }
 
   // Status timestamps arrive in both shapes: epoch milliseconds (account
@@ -913,27 +980,27 @@ ${SHARED_HELPERS}
     var t = parseTs(ts);
     if (isNaN(t)) return '';
     var s = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (s < 60) return s + 's ago';
-    if (s < 3600) return Math.round(s / 60) + 'm ago';
-    if (s < 86400) return Math.round(s / 3600) + 'h ago';
-    return Math.round(s / 86400) + 'd ago';
+    if (s < 60) return i18n.relative(-s, 'second');
+    if (s < 3600) return i18n.relative(-Math.round(s / 60), 'minute');
+    if (s < 86400) return i18n.relative(-Math.round(s / 3600), 'hour');
+    return i18n.relative(-Math.round(s / 86400), 'day');
   }
 
   function fmtIn(sec) {
     if (sec == null) return '';
     var s = Math.max(0, Math.round(sec));
-    if (s < 3600) return Math.round(s / 60) + 'm';
-    if (s < 86400) return (s / 3600).toFixed(1) + 'h';
-    return (s / 86400).toFixed(1) + 'd';
+    if (s < 3600) return i18n.number(Math.round(s / 60), { style: 'unit', unit: 'minute', unitDisplay: 'narrow' });
+    if (s < 86400) return i18n.number(s / 3600, { style: 'unit', unit: 'hour', unitDisplay: 'narrow', maximumFractionDigits: 1 });
+    return i18n.number(s / 86400, { style: 'unit', unit: 'day', unitDisplay: 'narrow', maximumFractionDigits: 1 });
   }
 
   // Absolute wall-clock of a future timestamp: "17:30" today, "Wed 09:00"
   // beyond 24h — the countdown says how long, this says when.
   function fmtClock(ts) {
     var d = new Date(ts);
-    var time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    var time = i18n.date(d, { hour: '2-digit', minute: '2-digit' });
     if (ts - Date.now() >= 86400000) {
-      return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
+      return i18n.date(d, { weekday: 'short' }) + ' ' + time;
     }
     return time;
   }
@@ -953,7 +1020,7 @@ ${SHARED_HELPERS}
     var reset = !isNaN(resetTs) && resetTs > Date.now()
       ? ' · ' + fmtIn((resetTs - Date.now()) / 1000) + ' · ' + fmtClock(resetTs)
       : '';
-    row.appendChild(el('span', 'val', (pct == null ? '?' : Math.round(pct * 100) + '%') + reset));
+    row.appendChild(el('span', 'val', (pct == null ? '?' : i18n.number(pct, { style: 'percent', maximumFractionDigits: 0 })) + reset));
     return row;
   }
 
@@ -962,7 +1029,7 @@ ${SHARED_HELPERS}
     var labels = recentModelLabels(usage);
     if (!labels.length) return null;
     var row = el('div', 'quota models');
-    row.appendChild(el('span', 'lbl', 'Model'));
+    row.appendChild(el('span', 'lbl', t("Model")));
     var names = el('span', 'names');
     labels.forEach(function (l) { names.appendChild(el('span', 'badge model', l)); });
     row.appendChild(names);
@@ -973,17 +1040,18 @@ ${SHARED_HELPERS}
     var card = el('div', 'card');
     var head = el('div', 'row');
     head.appendChild(el('span', 'name', a.name));
+    function identify(control, action) { control.setAttribute('data-account-control', JSON.stringify([cardNoteKey(a), action])); return control; }
     var isCurrent = currentAccounts
       ? currentAccounts[a.provider] === a.name
       : a.name === current;
-    accountBadges(a, current, currentAccounts, null, fleetThreshold, fleetThresholds).forEach(function (badge) {
+    accountBadges(a, current, currentAccounts, null, fleetThreshold, fleetThresholds, i18n).forEach(function (badge) {
       head.appendChild(el('span', 'badge ' + badge.cls, badge.text));
     });
     // Last in the row so the badges sit in the same place on every card.
     if (!isCurrent) {
-      var btn = el('button', 'act', 'switch');
+      var btn = el('button', 'act', t("switch"));
       btn.addEventListener('click', function () { doSwitch(a.name, cardNoteKey(a), btn); });
-      head.appendChild(btn);
+      head.appendChild(identify(btn, 'switch'));
     }
     // Account controls, in the order an operator reaches for them: take it out
     // of rotation, or move where rotation reaches it. Only the enable/disable
@@ -995,50 +1063,50 @@ ${SHARED_HELPERS}
     // A control this key would be refused is not drawn at all; the line under
     // the actions says why, once (callerNotice).
     if (callerCan(caller, '/relaycrew/disable')) {
-      var ctlDisable = el('button', 'act', a.disabled ? 'enable' : 'disable');
+      var ctlDisable = el('button', 'act', a.disabled ? t("enable") : t("disable"));
       ctlDisable.addEventListener('click', function () { doControlAccount(a.name, cardNoteKey(a), { disabled: !a.disabled }, ctlDisable); });
-      head.appendChild(ctlDisable);
+      head.appendChild(identify(ctlDisable, 'disable'));
     }
     if (!a.disabled && callerCan(caller, '/relaycrew/priority')) {
-      var ctlFirst = el('button', 'act', 'prioritize');
+      var ctlFirst = el('button', 'act', t("prioritize"));
       ctlFirst.addEventListener('click', function () { doControlAccount(a.name, cardNoteKey(a), { place: 'first' }, ctlFirst); });
-      head.appendChild(ctlFirst);
-      var ctlLast = el('button', 'act', 'deprioritize');
+      head.appendChild(identify(ctlFirst, 'first'));
+      var ctlLast = el('button', 'act', t("deprioritize"));
       ctlLast.addEventListener('click', function () { doControlAccount(a.name, cardNoteKey(a), { place: 'last' }, ctlLast); });
-      head.appendChild(ctlLast);
+      head.appendChild(identify(ctlLast, 'last'));
     }
     card.appendChild(head);
-    if (a.unavailable) card.appendChild(el('div', 'blocked', 'blocked: ' + (UNAVAILABLE_TEXT[a.unavailable] || a.unavailable)));
+    if (a.unavailable) card.appendChild(el('div', 'blocked', t('blocked: {reason}', { reason: unavailableText(a.unavailable, i18n) })));
     var q = a.quota || {};
     var models = modelsRow(a.usage);
     if (q.unified5h != null || q.unified7d != null) {
       // No Session row for a plan with no session window (see showSessionRow).
-      if (showSessionRow(q)) card.appendChild(quotaRow('Session', q.unified5h, q.unified5hReset));
+      if (showSessionRow(q)) card.appendChild(quotaRow(t("Session"), q.unified5h, q.unified5hReset));
       if (models) card.appendChild(models);
       models = null;
-      if (showWeeklyRow(q)) card.appendChild(quotaRow('Weekly', q.unified7d, q.unified7dReset));
+      if (showWeeklyRow(q)) card.appendChild(quotaRow(t("Weekly"), q.unified7d, q.unified7dReset));
       // Model-scoped weekly buckets are learned from the usage endpoint rather
       // than declared, so hard-coding the two families that have dedicated
       // fields drew an incomplete picture the moment upstream metered a third.
       scopedWeeklyRows(q).forEach(function (r) { card.appendChild(quotaRow(r.label, r.utilization, r.resetAt)); });
     } else if (q.tokensLimit != null && q.tokensRemaining != null) {
-      card.appendChild(quotaRow('Tokens', 1 - q.tokensRemaining / q.tokensLimit, q.resetsAt));
+      card.appendChild(quotaRow(t("Tokens"), 1 - q.tokensRemaining / q.tokensLimit, q.resetsAt));
     } else if (q.backend && (q.backend.text || q.backend.utilization != null)) {
-      var bq = backendQuotaRows(q.backend);
+      var bq = backendQuotaRows(q.backend, null, i18n);
       bq.rows.forEach(function (r) { card.appendChild(quotaRow(r.label, r.utilization, r.resetAt)); });
       if (bq.text) card.appendChild(el('div', 'usage', bq.text));
     } else {
-      card.appendChild(el('div', 'usage', 'quota unknown (no traffic observed yet)'));
+      card.appendChild(el('div', 'usage', t("quota unknown (no traffic observed yet)")));
     }
     if (models) card.appendChild(models);
     // Spend on this account that did not come through the proxy (#475).
-    var outside = outsideSpendText(q.outsideSpend);
-    if (outside) card.appendChild(el('div', 'usage', 'outside: ' + outside));
-    var forecast = forecastText(q.forecast, Date.now());
-    if (forecast) card.appendChild(el('div', 'usage', 'forecast: ' + forecast));
+    var outside = outsideSpendText(q.outsideSpend, i18n);
+    if (outside) card.appendChild(el('div', 'usage', t('outside: {usage}', { usage: outside })));
+    var forecast = forecastText(q.forecast, Date.now(), i18n);
+    if (forecast) card.appendChild(el('div', 'usage', t('forecast: {forecast}', { forecast: forecast })));
     var u = a.usage || {};
-    var last = u.lastUsed ? ' · last ' + fmtAgo(u.lastUsed) : '';
-    card.appendChild(el('div', 'usage', (u.totalRequests || 0) + ' req · ' + fmtNum(accountTokens(u)) + ' tok' + last));
+    var last = u.lastUsed ? t(' · last {time}', { time: fmtAgo(u.lastUsed) }) : '';
+    card.appendChild(el('div', 'usage', t('{requests} req · {tokens} tok{last}', { requests: fmtNum(u.totalRequests), tokens: fmtNum(accountTokens(u)), last: last })));
     return card;
   }
 
@@ -1050,13 +1118,13 @@ ${SHARED_HELPERS}
   // Under Total that needs no saying; under a window it does, or it reads as
   // the one thing this control must never do — a number under the wrong label.
   function lastUsedLabel() {
-    return usageView === 'total' ? 'Last used' : 'Last used (all time)';
+    return usageView === 'total' ? t('Last used') : t('Last used (all time)');
   }
 
   function usageHeading(base) {
     if (usageView === 'total') return base;
     var view = USAGE_VIEWS.filter(function (v) { return v.key === usageView; })[0];
-    return view ? base + ' · ' + view.label.toLowerCase() : base;
+    return view ? base + ' · ' + usageViewLabel(view.key) : base;
   }
 
   function renderClients(clients) {
@@ -1064,7 +1132,7 @@ ${SHARED_HELPERS}
     var names = Object.keys(clients || {});
     if (!names.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
-    document.getElementById('clientsHeading').textContent = usageHeading('Clients');
+    document.getElementById('clientsHeading').textContent = usageHeading(t("Clients"));
     // Sorted on the window being shown, not on the lifetime total: a table
     // ordered by all-time spend while displaying the last five hours would put
     // the quiet clients on top of the busy one.
@@ -1075,7 +1143,7 @@ ${SHARED_HELPERS}
     var table = document.getElementById('clients');
     table.textContent = '';
     var hr = el('tr');
-    ['Client', 'Requests', 'WebSockets', 'Input tok', 'Output tok', lastUsedLabel()].forEach(function (h, i) {
+    [t('Client'), t('Requests'), t('WebSockets'), t('Input tok'), t('Output tok'), lastUsedLabel()].forEach(function (h, i) {
       hr.appendChild(el('th', i ? 'num' : '', h));
     });
     table.appendChild(hr);
@@ -1100,9 +1168,9 @@ ${SHARED_HELPERS}
   // means something when there is a usage table under it.
   function buildUsageViews() {
     var wrap = document.getElementById('usageViewWrap');
-    wrap.appendChild(el('span', 'lbl', 'Usage window'));
+    var label = el('span', 'lbl', t('Usage window')); label.setAttribute('data-i18n', 'Usage window'); wrap.appendChild(label);
     USAGE_VIEWS.forEach(function (v) {
-      var btn = el('button', '', v.label);
+      var btn = el('button', '', usageViewLabel(v.key));
       btn.addEventListener('click', function () {
         usageView = v.key;
         markUsageView();
@@ -1114,8 +1182,10 @@ ${SHARED_HELPERS}
     markUsageView();
   }
 
+  function usageViewLabel(key) { return key === 'total' ? t('Total') : t('Last {window}', { window: key }); }
+
   function markUsageView() {
-    usageButtons.forEach(function (b) { b.btn.className = b.key === usageView ? 'sel' : ''; });
+    usageButtons.forEach(function (b) { b.btn.className = b.key === usageView ? 'sel' : ''; b.btn.textContent = usageViewLabel(b.key); });
   }
 
   // Header cells that re-sort in place. The sort is state, not a re-fetch, so
@@ -1135,20 +1205,20 @@ ${SHARED_HELPERS}
   // by Session brings a fan-out's rows together (the sort is stable, so they
   // stay in recency order inside it) and Conv is the only column that differs
   // between them. Narrow on purpose — it is a digest, not a name.
-  var SESSION_COLUMNS = [
-    { key: 'session', label: 'Session' },
-    { key: 'conversation', label: 'Conv' },
-    { key: 'client', label: 'Client' },
-    { key: 'project', label: 'Project' },
-    { key: 'accounts', label: 'Accounts' },
-    { key: 'requests', label: 'Req', num: true },
-    { key: 'cacheRead', label: 'Cache read', num: true },
-    { key: 'cacheCreation', label: 'Cache write', num: true },
-    { key: 'input', label: 'Input', num: true },
-    { key: 'output', label: 'Output', num: true },
-    { key: 'context', label: 'Context', num: true },
-    { key: 'lastSeen', label: 'Last seen', num: true },
-  ];
+  function sessionColumns() { return [
+    { key: 'session', label: t("Session") },
+    { key: 'conversation', label: t("Conv") },
+    { key: 'client', label: t("Client") },
+    { key: 'project', label: t("Project") },
+    { key: 'accounts', label: t("Accounts") },
+    { key: 'requests', label: t("Req"), num: true },
+    { key: 'cacheRead', label: t("Cache read"), num: true },
+    { key: 'cacheCreation', label: t("Cache write"), num: true },
+    { key: 'input', label: t("Input"), num: true },
+    { key: 'output', label: t("Output"), num: true },
+    { key: 'context', label: t("Context"), num: true },
+    { key: 'lastSeen', label: t("Last seen"), num: true },
+  ]; }
 
   function renderSessions(sessions) {
     var wrap = document.getElementById('sessionsWrap');
@@ -1169,12 +1239,12 @@ ${SHARED_HELPERS}
     // Conversations, not sessions: one client session contributes a row per
     // agent it has in flight, and counting rows as sessions would report a
     // fleet carrying several times the clients it has.
-    document.getElementById('sessionCount').textContent = rows.length + ' of ' + all.length + ' conversations';
+    document.getElementById('sessionCount').textContent = t('{count} of {total} conversations', { count: i18n.number(rows.length), total: i18n.number(all.length) });
 
     var table = document.getElementById('sessions');
     table.textContent = '';
     var hr = el('tr');
-    SESSION_COLUMNS.forEach(function (c) { addSortableHeader(hr, 'sessions', c.label, c.key, !!c.num); });
+    sessionColumns().forEach(function (c) { addSortableHeader(hr, 'sessions', c.label, c.key, !!c.num); });
     table.appendChild(hr);
     rows.forEach(function (r) {
       var tr = el('tr');
@@ -1193,7 +1263,7 @@ ${SHARED_HELPERS}
 
   function fillFilter(select, values, value) {
     select.textContent = '';
-    var all = el('option', '', 'All');
+    var all = el('option', '', t("All"));
     all.value = '';
     select.appendChild(all);
     values.forEach(function (v) {
@@ -1231,9 +1301,9 @@ ${SHARED_HELPERS}
       var table = el('table');
       var hr = el('tr');
       [{ key: 'name', label: name.charAt(0).toUpperCase() + name.slice(1) },
-        { key: 'requests', label: 'Req', num: true },
-        { key: 'inputTokens', label: 'Input tok', num: true },
-        { key: 'outputTokens', label: 'Output tok', num: true },
+        { key: 'requests', label: t("Req"), num: true },
+        { key: 'inputTokens', label: t("Input tok"), num: true },
+        { key: 'outputTokens', label: t("Output tok"), num: true },
         { key: 'lastUsed', label: lastUsedLabel(), num: true }].forEach(function (c) {
         addSortableHeader(hr, name, c.label, c.key, !!c.num);
       });
@@ -1257,35 +1327,35 @@ ${SHARED_HELPERS}
   // on the current account.
   function renderRoutes(s) {
     var wrap = document.getElementById('routesWrap');
-    var rows = routeRows(s);
+    var rows = routeRows(s, i18n);
     if (!rows.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
     var table = document.getElementById('routes');
     table.textContent = '';
     var hr = el('tr');
-    ['Family', 'Goes to', 'Can serve it'].forEach(function (h) { hr.appendChild(el('th', '', h)); });
+    [t("Family"), t("Goes to"), t("Can serve it")].forEach(function (h) { hr.appendChild(el('th', '', h)); });
     table.appendChild(hr);
     rows.forEach(function (r) {
       var tr = el('tr');
       var fam = el('td', '', r.label + (r.match ? ' ' : ''));
       if (r.match) fam.appendChild(el('span', 'tag', r.match));
-      if (r.provider) fam.appendChild(el('span', 'tag', ' ' + providerLabel(r.provider)));
+      if (r.provider) fam.appendChild(el('span', 'tag', ' ' + providerLabel(r.provider, i18n)));
       tr.appendChild(fam);
-      var to = el('td', r.blocked ? 'badt' : '', r.blocked ? 'blocked' : (r.target || '—'));
-      if (r.pinned) to.appendChild(el('span', 'pin', ' · pinned to ' + r.pinned));
-      if (r.pinMismatch) to.appendChild(el('span', 'warnt', ' (not eligible)'));
+      var to = el('td', r.blocked ? 'badt' : '', r.blocked ? t("blocked") : (r.target || '—'));
+      if (r.pinned) to.appendChild(el('span', 'pin', t(' · pinned to {account}', { account: r.pinned })));
+      if (r.pinMismatch) to.appendChild(el('span', 'warnt', t(" (not eligible)")));
       if (r.kind === 'default' && r.target !== r.current) {
         to.appendChild(el('span', 'warnt', r.currentUnavailable
-          ? ' · current account ' + r.current + ' is blocked: ' + (UNAVAILABLE_TEXT[r.currentUnavailable] || r.currentUnavailable)
-          : ' · outranks the current account ' + r.current));
+          ? t(' · current account {account} is blocked: {reason}', { account: r.current, reason: unavailableText(r.currentUnavailable, i18n) })
+          : t(' · outranks the current account {account}', { account: r.current })));
       }
       tr.appendChild(to);
       var can = el('td', r.kind === 'default' ? 'dim' : '');
-      if (r.kind === 'default') can.textContent = 'no route of its own';
+      if (r.kind === 'default') can.textContent = t("no route of its own");
       else if (r.blocked) can.textContent = '—';
       else if (!r.eligible.length && !r.ineligible.length) can.textContent = '—';
       else {
-        can.appendChild(el('span', 'ok', r.eligible.length + ' of ' + (r.eligible.length + r.ineligible.length) + (r.ineligible.length ? ' ' : '')));
+        can.appendChild(el('span', 'ok', t('{count} of {total}', { count: i18n.number(r.eligible.length), total: i18n.number(r.eligible.length + r.ineligible.length) }) + (r.ineligible.length ? ' ' : '')));
         if (r.ineligible.length) can.appendChild(el('span', 'no', r.ineligible.join(', ')));
       }
       tr.appendChild(can);
@@ -1297,30 +1367,31 @@ ${SHARED_HELPERS}
   // on is a banner nobody reads.
   function renderProblems(s) {
     var wrap = document.getElementById('problems');
-    var list = problems(s);
+    var list = problems(s, i18n);
     wrap.textContent = '';
     if (!list.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = 'block';
     list.forEach(function (p) { wrap.appendChild(el('div', p.severity, p.text)); });
   }
 
-  function render(s) {
+  function render(s, presentationOnly) {
     lastStatus = s;
+    if (!presentationOnly) lastStatusAt = Date.now();
     // The poll owns the threshold field except while it is being typed into:
     // rewriting it every POLL_MS would delete the operator's half-entered
     // number under the cursor. It also means a change made from the CLI, the
     // TUI or another browser shows up here without a refresh.
     var thrInput = document.getElementById('thrVal');
-    if (document.activeElement !== thrInput) thrInput.value = thresholdPercentText(s.switchThreshold);
+    if (!presentationOnly && document.activeElement !== thrInput) thrInput.value = thresholdPercentText(s.switchThreshold);
     // Kept visible read-only: the number still tells a client where the fleet switches.
     var canThreshold = callerCan(s.caller, '/relaycrew/threshold');
-    thrInput.disabled = !canThreshold;
+    if (!presentationOnly) thrInput.disabled = !canThreshold;
     document.getElementById('thrSet').style.display = canThreshold ? '' : 'none';
-    var notice = callerNotice(s.caller);
+    var notice = callerNotice(s.caller, i18n);
     document.getElementById('callerText').textContent = notice || '';
     document.getElementById('caller').style.display = notice ? 'block' : 'none';
     var sess = s.sessions || {};
-    var up = s.server && s.server.uptimeSeconds != null ? 'up ' + fmtIn(s.server.uptimeSeconds) : '';
+    var up = s.server && s.server.uptimeSeconds != null ? t('up {duration}', { duration: fmtIn(s.server.uptimeSeconds) }) : '';
     var sum = document.getElementById('summary');
     sum.textContent = '';
     var currentAccounts = s.currentAccounts || null;
@@ -1329,32 +1400,32 @@ ${SHARED_HELPERS}
       if (b === 'anthropic') return 1;
       return a < b ? -1 : a > b ? 1 : 0;
     }) : [];
-    sum.appendChild(el('span', '', providerIds.length ? 'active accounts ' : 'active account '));
+    sum.appendChild(el('span', '', providerIds.length ? t('active accounts') + ' ' : t('active account') + ' '));
     if (providerIds.length) {
       providerIds.forEach(function (provider, i) {
         if (i) sum.appendChild(el('span', '', ' · '));
-        sum.appendChild(el('span', '', providerLabel(provider) + ': '));
-        sum.appendChild(el('b', '', currentAccounts[provider] || 'none'));
+        sum.appendChild(el('span', '', providerLabel(provider, i18n) + ': '));
+        sum.appendChild(el('b', '', currentAccounts[provider] || t('none')));
       });
     } else {
-      sum.appendChild(el('b', '', s.currentAccount || 'none'));
+      sum.appendChild(el('b', '', s.currentAccount || t('none')));
     }
     // Conversations, like the table below it and the count above that table:
     // one page saying "sessions" here and "conversations" there would read as
     // two different quantities rather than one counted twice.
-    sum.appendChild(el('span', '', ' · ' + (sess.active || 0) + ' active / ' + (sess.known || 0) + ' known conversations' + (up ? ' · ' + up : '')));
-    var pinsText = sessionPinsText(s.sessionPins);
+    sum.appendChild(el('span', '', ' · ' + t('{active} active / {known} known conversations', { active: i18n.number(sess.active || 0), known: i18n.number(sess.known || 0) }) + (up ? ' · ' + up : '')));
+    var pinsText = sessionPinsText(s.sessionPins, i18n);
     if (pinsText) sum.appendChild(el('span', 'pin', ' · ' + pinsText));
     var probe = s.probe || {};
     var probeBtn = document.getElementById('probe');
-    probeBtn.textContent = probe.running ? 'Probe running…' : 'Probe quotas';
-    probeBtn.disabled = !!probe.running;
+    probeBtn.textContent = probe.running ? t("Probe running…") : t("Probe quotas");
+    if (!presentationOnly) probeBtn.disabled = !!probe.running;
     var acc = document.getElementById('accounts');
     acc.textContent = '';
     var now = Date.now();
     (s.accounts || []).forEach(function (a) {
       var cn = cardNoteFor(cardNotes, cardNoteKey(a), now);
-      if (cn) acc.appendChild(el('div', 'cardnote ' + cn.kind, cn.text));
+      if (cn) acc.appendChild(el('div', 'cardnote ' + cn.kind, formatNote(cn)));
       acc.appendChild(renderAccount(a, s.currentAccount, currentAccounts, s.switchThreshold, s.switchThresholds, s.caller));
     });
     renderProblems(s);
@@ -1366,8 +1437,8 @@ ${SHARED_HELPERS}
     var anyUsage = Object.keys(s.clients || {}).length || Object.keys(s.usageDimensions || {}).length;
     document.getElementById('usageViewWrap').style.display = anyUsage ? '' : 'none';
     renderSessions(s.sessions);
-    if (typeof window !== 'undefined' && window.RelayWorkspace) window.RelayWorkspace.update(s);
-    document.getElementById('foot').textContent = 'refreshes every ' + (POLL_MS / 1000) + 's · ' + new Date().toLocaleTimeString();
+    if (!presentationOnly && window.RelayWorkspace) window.RelayWorkspace.update(s);
+    document.getElementById('foot').textContent = t('refreshes every {seconds}s · {time}', { seconds: i18n.number(POLL_MS / 1000), time: i18n.date(lastStatusAt, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) });
   }
 
   // An account action reports above its own card, where the click was: the
@@ -1378,15 +1449,25 @@ ${SHARED_HELPERS}
   // poll the caller starts shows it: re-rendering the stale status here would
   // rebuild the card and re-enable a switch button that must stay disabled
   // until the poll reports the switch.
-  function cardNote(key, kind, text, now) {
-    cardNotes[key] = { kind: kind, text: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + text, at: Date.now() };
+  function formatNote(note) {
+    return i18n.date(note.at, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + note.render();
+  }
+
+  function cardNote(key, kind, renderText, now) {
+    cardNotes[key] = { kind: kind, render: renderText, at: Date.now() };
     if (now && lastStatus) render(lastStatus);
   }
 
-  function note(kind, text) {
+  function note(kind, renderText) {
+    lastNote = { kind: kind, render: renderText, at: Date.now() };
+    renderNote();
+  }
+
+  function renderNote() {
+    if (!lastNote) return;
     var n = document.getElementById('note');
-    n.className = kind;
-    n.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + text;
+    n.className = lastNote.kind;
+    n.textContent = formatNote(lastNote);
     n.style.display = 'block';
   }
 
@@ -1403,14 +1484,14 @@ ${SHARED_HELPERS}
       })
       .then(function (json) {
         if (!json) return;
-        var out = switchOutcome(json);
-        cardNote(noteKey, out.kind, out.text, false);
+        var out = switchOutcome(json, i18n);
+        cardNote(noteKey, out.kind, function () { return switchOutcome(json, i18n).text; }, false);
         // Re-enabled on any non-success, whether the server refused or the
         // fetch threw, so the two failure paths leave the button in one state.
         if (out.kind !== 'ok') btn.disabled = false;
         poll();
       })
-      .catch(function (e) { cardNote(noteKey, 'error', 'switch failed: ' + e.message, true); btn.disabled = false; });
+      .catch(function (e) { cardNote(noteKey, 'error', function () { return t('switch failed: {error}', { error: e.message }); }, true); btn.disabled = false; });
   }
 
   function doControlAccount(name, noteKey, spec, btn) {
@@ -1423,11 +1504,11 @@ ${SHARED_HELPERS}
       })
       .then(function (json) {
         if (!json) return;
-        var out = accountControlOutcome(json, spec);
-        cardNote(noteKey, out.kind, out.text, false);
+        var out = accountControlOutcome(json, spec, i18n);
+        cardNote(noteKey, out.kind, function () { return accountControlOutcome(json, spec, i18n).text; }, false);
         poll();
       })
-      .catch(function (e) { cardNote(noteKey, 'error', 'change failed: ' + e.message, true); })
+      .catch(function (e) { cardNote(noteKey, 'error', function () { return t('change failed: {error}', { error: e.message }); }, true); })
       // Unlike doSwitch, always re-enabled: the card is rebuilt by the poll
       // above, and a button that stayed dead after a refused change would be
       // the only control an operator could not retry.
@@ -1444,7 +1525,7 @@ ${SHARED_HELPERS}
     // Left to the server otherwise: an empty field is the one case it would see
     // as a missing key rather than a bad number, and "invalid request body" is
     // not what an operator who cleared the box needs to read.
-    if (!raw) { note('error', 'switch threshold: enter a percentage from 1 to 100'); return; }
+    if (!raw) { note('error', function () { return t("switch threshold: enter a percentage from 1 to 100"); }); return; }
     btn.disabled = true;
     var r = thresholdRequest(Number(raw), localStorage.getItem(KEY));
     fetch(r.url, r.init)
@@ -1454,15 +1535,15 @@ ${SHARED_HELPERS}
       })
       .then(function (json) {
         if (!json) return;
-        var out = thresholdOutcome(json);
-        note(out.kind, out.text);
+        var out = thresholdOutcome(json, i18n);
+        note(out.kind, function () { return thresholdOutcome(json, i18n).text; });
         // The stored number, not the typed one: the setting is quantised to
         // tenths, and a field left reading 97.55 after a save of 97.6 invites a
         // re-save that changes nothing.
         if (json.ok) input.value = thresholdPercentText(json.switchThreshold);
         poll();
       })
-      .catch(function (e) { note('error', 'switch threshold change failed: ' + e.message); })
+      .catch(function (e) { note('error', function () { return t('switch threshold change failed: {error}', { error: e.message }); }); })
       .finally(function () { btn.disabled = false; });
   }
 
@@ -1475,11 +1556,11 @@ ${SHARED_HELPERS}
       })
       .then(function (json) {
         if (!json) return;
-        if (json.ok !== true) { note('error', label + ' failed' + (json.error ? ': ' + json.error : '')); return; }
-        note('ok', label + ' complete');
+        if (json.ok !== true) { note('error', function () { return t('{action} failed{error}', { action: label(), error: json.error ? ': ' + json.error : '' }); }); return; }
+        note('ok', function () { return t('{action} complete', { action: label() }); });
         poll();
       })
-      .catch(function (e) { note('error', label + ' failed: ' + e.message); })
+      .catch(function (e) { note('error', function () { return t('{action} failed: {error}', { action: label(), error: e.message }); }); })
       .finally(function () { btn.disabled = false; });
   }
 
@@ -1507,14 +1588,14 @@ ${SHARED_HELPERS}
         if (!s || (localStorage.getItem(KEY) || '') !== requestKey) return;
         document.getElementById('keybox').style.display = 'none';
         document.getElementById('app').style.display = '';
-        document.getElementById('err').style.display = 'none';
+        document.getElementById('err').style.display = 'none'; pollError = null;
         render(s);
       })
       .catch(function (e) {
         if ((localStorage.getItem(KEY) || '') !== requestKey) return;
         var err = document.getElementById('err');
         err.style.display = 'block';
-        err.textContent = 'Não foi possível conectar ao gateway: ' + e.message + '. Nova tentativa automática em 5 segundos.';
+        pollError = e.message; renderPollError();
         if (typeof window !== 'undefined' && window.RelayWorkspace) window.RelayWorkspace.failed(e.message);
         // The banner lives inside #app, which stays hidden until a first
         // status lands; without this a first poll that fails is a blank page.
@@ -1553,7 +1634,7 @@ ${SHARED_HELPERS}
     // Name the state, not the action: a button reading "Dark" while the page is
     // light is the ambiguity every theme toggle has, and this one says where it
     // is rather than where it would go.
-    btn.textContent = theme === 'system' ? 'Theme: system' : theme === 'light' ? 'Theme: light' : 'Theme: dark';
+    btn.textContent = theme === 'system' ? t('Theme: system') : theme === 'light' ? t('Theme: light') : t('Theme: dark');
   }
   function storeTheme(theme) {
     try {
@@ -1572,8 +1653,8 @@ ${SHARED_HELPERS}
     applyTheme(theme);
   });
 
-  document.getElementById('reload').addEventListener('click', function () { doControl('/relaycrew/reload', 'config reload', this); });
-  document.getElementById('probe').addEventListener('click', function () { doControl('/relaycrew/probe', 'quota probe', this); });
+  document.getElementById('reload').addEventListener('click', function () { doControl('/relaycrew/reload', function () { return t('config reload'); }, this); });
+  document.getElementById('probe').addEventListener('click', function () { doControl('/relaycrew/probe', function () { return t('quota probe'); }, this); });
   document.getElementById('thrSet').addEventListener('click', function () { doThreshold(this); });
   // A client key is a valid key, so nothing else on the page would ever ask for
   // another one: the operator needs a way back to the key box.
@@ -1591,6 +1672,24 @@ ${SHARED_HELPERS}
   });
 
   if (typeof window !== 'undefined' && window.RelayWorkspace) window.RelayWorkspace.refresh = poll;
+
+  function renderPollError() {
+    if (pollError !== null) document.getElementById('err').textContent = t('Could not connect to the gateway: {error}. Retrying automatically in 5 seconds.', { error: pollError });
+  }
+  i18n.onChange(function () {
+    var active = document.activeElement;
+    var focusedControl = active && active.getAttribute && active.getAttribute('data-account-control');
+    var busy = new Set();
+    document.querySelectorAll('[data-account-control]').forEach(function (control) { if (control.disabled) busy.add(control.getAttribute('data-account-control')); });
+    markUsageView(); applyTheme(theme);
+    if (lastStatus && document.getElementById('app').style.display !== 'none') render(lastStatus, true);
+    renderNote(); renderPollError();
+    document.querySelectorAll('[data-account-control]').forEach(function (control) {
+      var identity = control.getAttribute('data-account-control');
+      if (busy.has(identity)) control.disabled = true;
+      if (identity === focusedControl) control.focus();
+    });
+  });
 
   // Poll before asking: a loopback browser is key-exempt, so the prompt is
   // shown only once the server refuses the request without a valid key.

@@ -1,3 +1,4 @@
+import { I18N_SCRIPT } from '../src/dashboard-translations.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -687,7 +688,7 @@ test('the page ships the same helper implementations it is tested against', () =
 // Run the page's whole inline script against a stub DOM, a stub localStorage and
 // a fetch the test answers by hand. Elements absorb any method call, so render()
 // runs without a real DOM; only the style and text the startup path sets are read.
-function bootPage({ storedKey = null, storedTheme = null } = {}) {
+function bootPage({ storedKey = null, storedTheme = null, storedLocale = null } = {}) {
   const els = new Map();
   // Listeners are recorded rather than absorbed, and every element built is
   // kept, so a test can drive a control the page created for itself — the
@@ -700,7 +701,9 @@ function bootPage({ storedKey = null, storedTheme = null } = {}) {
     // order, since a page may attach more than one to the same element.
     const listeners = new Map();
     const target = {
-      style: {}, value: '', textContent: '', className: '', disabled: false,
+      style: {}, value: '', textContent: '', className: '', disabled: false, attrs: {},
+      setAttribute(key, value) { this.attrs[key] = String(value); },
+      getAttribute(key) { return this.attrs[key] ?? null; },
       addEventListener: (type, fn) => { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(fn); },
       listens: type => (listeners.get(type) || []).length > 0,
     };
@@ -715,6 +718,7 @@ function bootPage({ storedKey = null, storedTheme = null } = {}) {
   const store = new Map([
     ...(storedKey ? [['relaycrew-dashboard-key', storedKey]] : []),
     ...(storedTheme ? [['relaycrew-dashboard-theme', storedTheme]] : []),
+    ...(storedLocale ? [['relaycrew-dashboard-locale', storedLocale]] : []),
   ]);
   const localStorage = {
     getItem: k => (store.has(k) ? store.get(k) : null),
@@ -731,11 +735,13 @@ function bootPage({ storedKey = null, storedTheme = null } = {}) {
     removeAttribute: k => rootAttrs.delete(k),
     getAttribute: k => (rootAttrs.has(k) ? rootAttrs.get(k) : null),
   };
-  const document = { getElementById: byId, createElement: () => stubEl(), documentElement };
+  const document = { getElementById: byId, createElement: () => stubEl(), documentElement, querySelectorAll: selector => built.filter(element => selector === '[data-account-control]' && element.getAttribute('data-account-control') !== null) };
+  const window = { localStorage };
+  new Function('document', 'window', I18N_SCRIPT)(document, window);
   const html = renderDashboardHtml();
   const script = inlineScripts(html).at(-1);
-  new Function('document', 'localStorage', 'fetch', 'setInterval', 'clearInterval', script)(
-    document, localStorage, fetch, () => 1, () => {});
+  new Function('document', 'window', 'localStorage', 'fetch', 'setInterval', 'clearInterval', script)(
+    document, window, localStorage, fetch, () => 1, () => {});
   const answer = async (status, body = {}) => {
     requests.shift().resolve({ status, ok: status >= 200 && status < 300, json: async () => body });
     await new Promise(r => setImmediate(r));
@@ -752,7 +758,7 @@ function bootPage({ storedKey = null, storedTheme = null } = {}) {
     el.fire('click');
   };
   const labelled = label => built.slice(mark).filter(e => e.textContent === label).length;
-  return { byId, store, requests, answer, rootAttrs, click, labelled };
+  return { byId, document, window, store, requests, answer, rootAttrs, click, labelled };
 }
 
 test('the page polls status before asking for a key, so a key-exempt browser is never prompted', async () => {
@@ -1000,8 +1006,8 @@ test('selecting a window relabels every table it governs', async () => {
 
   // The heading is what stops a windowed figure being read as a lifetime one
   // once the control itself is scrolled out of view.
-  assert.equal(page.byId('clientsHeading').textContent, 'Clients · last 24h');
-  assert.equal(page.labelled('Project · last 24h'), 1, 'the dimension table names the window too');
+  assert.equal(page.byId('clientsHeading').textContent, 'Clients · Last 24h');
+  assert.equal(page.labelled('Project · Last 24h'), 1, 'the dimension table names the window too');
   assert.equal(page.labelled('Last used (all time)'), 2, 'and the one lifetime column says so');
   assert.equal(page.labelled('Last used'), 0);
 
@@ -1106,4 +1112,26 @@ test('status from a previous browser credential is discarded before rendering', 
   page.store.set('relaycrew-dashboard-key', 'new-administrator');
   await page.answer(200, { accounts: [{ name: 'previous-context-account' }] });
   assert(!page.byId('summary').textContent.includes('previous-context-account'));
+});
+
+test('account cards hide unstated session and weekly windows while showing actual readings', async () => {
+  for (const [field, label, quota] of [
+    ['sessionWindowStated', 'Session', { unified5h: null, unified7d: 0.2 }],
+    ['weeklyWindowStated', 'Weekly', { unified5h: 0.2, unified7d: null }],
+  ]) {
+    for (const stated of [false, true]) {
+      const page = bootPage();
+      await page.answer(200, { accounts: [{ name: 'work', quota: { ...quota, [field]: stated } }] });
+      assert.equal(page.labelled(label), stated ? 1 : 0);
+    }
+  }
+});
+
+test('client table headings use the selected locale rather than the source English labels', async () => {
+  for (const [storedLocale, requestsLabel, inputLabel] of [['en', 'Requests', 'Input tok'], ['pt-BR', 'Requisições', 'Tokens entrada'], ['es', 'Solicitudes', 'Tokens entrada']]) {
+    const page = bootPage({ storedLocale });
+    await page.answer(200, { accounts: [], clients: { operator: { requests: 3, inputTokens: 500 } } });
+    assert.equal(page.labelled(requestsLabel), 1);
+    assert.equal(page.labelled(inputLabel), 1);
+  }
 });

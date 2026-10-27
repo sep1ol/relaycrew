@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WORKSPACE_SCRIPT, workspaceDistribution, historyDistribution, validHistory, workspaceAdmin, historyPath } from '../src/dashboard-workspace.js';
+import { WORKSPACE_SCRIPT, workspaceDistribution, historyDistribution, validHistory, workspaceAdmin, historyPath, createSeriesColors } from '../src/dashboard-workspace.js';
+import { I18N_SCRIPT } from '../src/dashboard-translations.js';
+import { makeDashboardDom } from './helpers/dashboard-dom.js';
 import { WORKSPACE_HTML } from '../src/dashboard-shell.js';
 import { renderDashboardHtml, inlineScripts, dashboardCsp } from '../src/dashboard.js';
 
@@ -46,7 +48,7 @@ test('history queries encode dimensions and refuse unsupported cumulative timeli
 
 test('assembled workspace remains static and every script is admitted by CSP', () => {
   const html = renderDashboardHtml();
-  assert.match(html, /lang="pt-BR"/);
+  assert.ok(html.includes('lang="en"'));
   for (const view of ['overview', 'accounts', 'team', 'usage', 'sessions', 'settings']) assert.ok(html.includes('data-panel="' + view + '"'));
   assert.ok(inlineScripts(html).includes(WORKSPACE_SCRIPT));
   assert.equal((dashboardCsp(html).match(/sha256-/g) || []).length, inlineScripts(html).length);
@@ -54,44 +56,19 @@ test('assembled workspace remains static and every script is admitted by CSP', (
   assert.doesNotMatch(html, /<script[^>]+src=|<link[^>]+href=/);
 });
 
-function boot({ key = 'admin-key', caller = { kind: 'operator', refused: [] } } = {}) {
-  class Element {
-    constructor(tag = 'div') { this.tagName = tag; this.children = []; this.style = {}; this.attrs = {}; this.listeners = {}; this._text = ''; this.value = ''; this.hidden = false; this.disabled = false; this.checked = false; this.open = false; }
-    set textContent(value) { this._text = String(value); this.children = []; }
-    get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
-    get selectedOptions() { return this.children.filter(child => child.value === this.value); }
-    appendChild(child) { this.children.push(child); return child; }
-    prepend(child) { this.children.unshift(child); }
-    setAttribute(key, value) { this.attrs[key] = String(value); }
-    getAttribute(key) { return this.attrs[key] ?? null; }
-    removeAttribute(key) { delete this.attrs[key]; }
-    addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }
-    async fire(type, extra = {}) { for (const handler of this.listeners[type] || []) await handler({ preventDefault() {}, currentTarget: this, ...extra }); }
-    querySelectorAll(selector) { return this.children.flatMap(child => [child, ...child.querySelectorAll('*')]).filter(child => selector === '*' || (selector === 'input:checked' ? child.tagName === 'input' && child.checked : child.tagName === selector)); }
-    querySelector(selector) { return this.querySelectorAll(selector)[0]; }
-    showModal() { this.open = true; }
-    close() { this.open = false; this.fire('close'); }
-    reset() {}
-    focus() { this.focused = true; }
-    select() { this.selected = true; }
-  }
-  const elements = new Map([...WORKSPACE_HTML.matchAll(/id="([^"]+)"/g)].map(match => [match[1], new Element()]));
-  const $ = id => elements.get(id);
-  $('sessionsEmpty').appendChild(new Element('h2')); $('sessionsEmpty').appendChild(new Element('p'));
-  for (const [id, values] of Object.entries({ historyWindow: ['24h', '5h', 'total'], historyScope: ['clients'], historyMetric: ['requests', 'inputTokens', 'outputTokens', 'connections'], historyStep: ['15m', '1h'] })) {
-    for (const value of values) { const option = new Element('option'); option.value = value; option.textContent = value; $(id).appendChild(option); }
-    $(id).value = values[0];
-  }
-  const events = {}, requests = [], store = new Map(key ? [['relaycrew-dashboard-key', key]] : []);
-  const window = { location: { hash: '#team' }, navigator: {}, addEventListener(type, handler) { events[type] = handler; } };
-  const document = { getElementById: $, querySelectorAll: () => [], createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag) };
+function boot({ key = 'admin-key', caller = { kind: 'operator', refused: [] }, locale = 'pt-BR', stored = [] } = {}) {
+  const { document, $ } = makeDashboardDom(WORKSPACE_HTML);
+  const events = {}, requests = [], store = new Map([...(key ? [['relaycrew-dashboard-key', key]] : []), ...(locale ? [['relaycrew-dashboard-locale', locale]] : []), ...stored]);
+  const localStorage = { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value), removeItem: key => store.delete(key) };
+  const window = { localStorage, location: { hash: '#team' }, navigator: {}, getComputedStyle: () => ({ backgroundColor: 'rgb(37, 99, 235)' }), addEventListener(type, handler) { events[type] = handler; } };
+  new Function('document', 'window', I18N_SCRIPT)(document, window);
   const fetch = (url, init) => new Promise(resolve => requests.push({ url, init, resolve }));
-  new Function('document', 'window', 'fetch', 'localStorage', WORKSPACE_SCRIPT)(document, window, fetch, { getItem: key => store.get(key) || null });
+  new Function('document', 'window', 'fetch', WORKSPACE_SCRIPT)(document, window, fetch);
   const status = { caller, accounts: [], sessions: {}, clients: {}, usageDimensions: {}, configuredUsageDimensions: ['project'] };
   const flush = () => new Promise(resolve => setImmediate(resolve));
   const answer = async (status, body) => { const req = requests.shift(); assert.ok(req, 'request expected'); req.resolve({ status, ok: status >= 200 && status < 300, json: async () => body }); await flush(); return req; };
   window.RelayWorkspace.update(status);
-  return { $, requests, window, status, store, flush, answer, navigate: async view => { window.location.hash = '#' + view; events.hashchange(); await flush(); } };
+  return { $, document, requests, window, status, store, flush, answer, navigate: async view => { window.location.hash = '#' + view; events.hashchange(); await flush(); } };
 }
 const team = () => ({ ok: true, enabled: true, revision: 'rev-1', accounts: [{ id: 'account-id', name: '<img src=x onerror=alert(1)>', provider: 'anthropic' }], members: [{ name: 'marina', accounts: ['account-id'], maxConcurrent: 4, active: 1, disabled: false, usage: { requests: 5 } }] });
 
@@ -143,7 +120,7 @@ test('browser history keeps chart/table totals equal and rejects stale filter re
   page.$('historyMetric').value = 'outputTokens'; await page.$('historyMetric').fire('change');
   await page.answer(200, history());
   const rendered = page.$('historyTable').textContent;
-  assert.match(rendered, /outputTokens/); assert.match(rendered, /<script>hostile<\/script>/);
+  assert.match(rendered, /Tokens de saída/); assert.match(rendered, /<script>hostile<\/script>/);
   assert.equal(page.$('historyChart').querySelectorAll('svg').length, 1);
   assert.equal(page.$('historyTable').querySelectorAll('tr').length, 3);
   first.resolve({ status: 200, ok: true, json: async () => ({ ...history(), total: [500, 500] }) }); await page.flush();
@@ -326,4 +303,92 @@ test('browser old confirmation responses cannot close or unlock a new pending co
     assert.equal(JSON.parse(page.requests[0].init.body).revision, 'new-auth-revision');
     await page.answer(200, { ok: true }); await page.answer(200, team()); await newConfirm;
   }
+});
+
+test('series colors allocate distinct defaults by scope and identity and retain them across reloads', () => {
+  const store = new Map();
+  const storage = { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value) };
+  const colors = createSeriesColors(storage);
+  const keys = ['alpha', 'beta', '__proto__', ...Array.from({ length: 10 }, (_, index) => 'client-' + index)];
+  const first = keys.map(key => colors.css('clients', key));
+  assert.equal(new Set(first.slice(0, 12)).size, 12);
+  assert.equal(first[0], 'var(--series-1)');
+  assert.equal(first[1], 'var(--series-2)');
+  assert.equal(first[12], first[0], 'the finite twelve-color palette reuses slots without moving existing identities');
+  assert.equal(colors.css('clients', '(remaining)'), 'var(--series-13)');
+  assert.equal(colors.css('dimension:project', 'beta'), 'var(--series-1)');
+  colors.set('clients', 'beta', '#AB12EF');
+  assert.equal(colors.css('clients', 'beta'), '#ab12ef');
+  assert.equal(colors.css('dimension:project', 'beta'), 'var(--series-1)');
+  const reloaded = createSeriesColors(storage);
+  assert.deepEqual(keys.toReversed().map(key => reloaded.css('clients', key)), first.toReversed().map((value, index) => index === keys.length - 2 ? '#ab12ef' : value));
+  reloaded.set('clients', 'beta', null);
+  assert.equal(reloaded.css('clients', 'beta'), 'var(--series-2)');
+  assert.equal(createSeriesColors(storage).css('clients', 'beta'), 'var(--series-2)');
+});
+
+test('color preferences reject malformed storage and nonopaque colors and remain usable with blocked storage', () => {
+  for (const raw of ['bad json', 'null', '[]', '{"version":2,"entries":{}}', '{"version":1,"entries":[]}', '{"version":1,"entries":{"bad":null}}']) {
+    const colors = createSeriesColors({ getItem: () => raw, setItem() {} });
+    assert.equal(colors.css('clients', 'alpha'), 'var(--series-1)');
+  }
+  const colors = new Function('return (' + createSeriesColors.toString() + ')')()({ getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } });
+  for (const value of ['red', '#fff', '#12345678', 'transparent', 'url(javascript:alert(1))']) colors.set('clients', 'alpha', value);
+  assert.equal(colors.css('clients', 'alpha'), 'var(--series-1)');
+  colors.set('clients', 'alpha', '#123abc');
+  assert.equal(colors.css('clients', 'alpha'), '#123abc');
+  colors.set('clients', 'alpha', null);
+  assert.equal(colors.css('clients', 'alpha'), 'var(--series-1)');
+});
+
+test('legend color edits repaint existing nodes across overview, history, sorting, totals, and locale changes without requests', async () => {
+  const page = boot({ locale: null }); await page.answer(200, team());
+  await page.navigate('overview'); await page.answer(200, history());
+  await page.navigate('usage'); await page.answer(200, { ...history(), series: history().series.toReversed() });
+  const identity = JSON.stringify(['clients', '<script>hostile</script>']);
+  const input = page.document.querySelectorAll('[data-color-control]').find(element => element.getAttribute('data-color-control') === identity);
+  input.focus(); input.value = '#12abef'; await input.fire('input');
+  assert.equal(page.document.activeElement, input);
+  assert.ok(page.document.querySelectorAll('[data-color-control]').includes(input), 'editing preserves the native picker node');
+  const assertPaint = () => {
+    const bindings = page.document.querySelectorAll('[data-series-color]').filter(element => element.getAttribute('data-series-color') === identity);
+    assert.ok(bindings.length >= 3);
+    for (const binding of bindings) assert.equal(binding.getAttribute('data-series-paint') === 'fill' ? binding.getAttribute('fill') : binding.style.background, '#12abef');
+  };
+  assertPaint();
+  await page.$('historyDistribution').querySelectorAll('button').find(element => element.getAttribute('aria-label') === 'Sort by name').fire('click');
+  assertPaint();
+  page.window.RelayI18n.setLocale('es'); assertPaint();
+  assert.equal(page.requests.length, 0);
+  page.status.clients = { '<script>hostile</script>': { requests: 22 } };
+  page.$('historyWindow').value = 'total'; await page.$('historyWindow').fire('change');
+  assertPaint(); assert.equal(page.requests.length, 0);
+  const reloaded = createSeriesColors({ getItem: key => page.store.get(key), setItem() {} });
+  assert.equal(reloaded.css('clients', '<script>hostile</script>'), '#12abef');
+});
+
+test('locale changes preserve member drafts, checkbox nodes, busy saves, issued keys, selected buckets, and focus', async () => {
+  const page = boot({ locale: null }); await page.answer(200, team());
+  await page.$('teamAdd').fire('click');
+  page.$('memberName').value = 'draft-name'; page.$('memberLimit').value = '7';
+  const checkbox = page.$('memberAccounts').querySelectorAll('input')[0]; checkbox.checked = true; checkbox.focus();
+  page.window.RelayI18n.setLocale('es');
+  assert.equal(page.$('memberName').value, 'draft-name'); assert.equal(page.$('memberLimit').value, '7');
+  assert.equal(page.$('memberAccounts').querySelectorAll('input')[0], checkbox); assert.equal(checkbox.checked, true);
+  assert.equal(page.document.activeElement, checkbox); assert.equal(page.$('memberDialog').open, true);
+  const save = page.$('memberForm').fire('submit'); await page.flush();
+  page.window.RelayI18n.setLocale('pt-BR');
+  assert.equal(page.$('memberSave').disabled, true); assert.match(page.$('memberError').textContent, /Salvando/);
+  assert.equal(page.requests.length, 1, 'changing language never submits or reloads');
+  await page.answer(200, { ok: true, applied: true, revision: 'rev-2', issuedKey: 'one-time-key' }); await page.answer(200, team()); await save;
+  page.$('issuedKey').focus(); page.window.RelayI18n.setLocale('es');
+  assert.equal(page.$('issuedKey').value, 'one-time-key'); assert.equal(page.$('issuedDialog').open, true); assert.equal(page.document.activeElement, page.$('issuedKey'));
+  page.$('issuedDialog').close(); await page.navigate('usage'); await page.answer(200, history());
+  const bucket = page.$('historyChart').querySelectorAll('g')[0]; await bucket.fire('click');
+  const selected = page.$('historyChart').querySelectorAll('g')[0]; selected.focus();
+  page.window.RelayI18n.setLocale('en');
+  assert.equal(page.$('historyChart').querySelectorAll('g')[0].getAttribute('aria-pressed'), 'true');
+  assert.equal(page.document.activeElement, page.$('historyChart').querySelectorAll('g')[0]);
+  assert.equal(page.$('historyScope').querySelectorAll('option')[0].textContent, 'Clients');
+  assert.equal(page.requests.length, 0);
 });
