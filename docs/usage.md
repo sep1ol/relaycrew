@@ -171,7 +171,7 @@ eval "$(relaycrew env --mitm)"    # MITM regardless of defaultClientMode
 claude
 ```
 
-Only the export lines go to stdout (so `eval` is safe); a short summary and any hints go to stderr. No `ANTHROPIC_API_KEY` is emitted — loopback clients are exempt from the proxy key gate, and setting it would drop Claude Code out of subscription mode. A remote (non-loopback) client must add the proxy key itself.
+Only the export lines go to stdout (so `eval` is safe); a short summary and any hints go to stderr. Outside team mode, no gateway credential is emitted because loopback clients are exempt from the proxy key gate. In team mode, base-URL mode exports `ANTHROPIC_AUTH_TOKEN` and unsets `ANTHROPIC_API_KEY`; MITM mode supplies the proxy key through CONNECT authentication. A remote client must configure its own member key. Bearer authentication applies to HTTP requests; WebSocket upgrades still require `x-api-key`. See [developer setup](teams.md#configure-claude-code).
 
 **The proxy variables are shell-wide.** In MITM mode the eval exports `HTTPS_PROXY` and friends, and every other tool in that shell — `gh`, `git`, a package manager — follows them to a listener that only speaks to the providers' hosts; in a sandboxed shell that can surface as a synthetic 403 from an unrelated command. If that is your shell, set `defaultClientMode: "base-url"` (the **Client mode** row on the TUI settings screen): `env` then emits `ANTHROPIC_BASE_URL` only and, re-evaluated, unsets the proxy variables an earlier MITM eval left pointing at this proxy, leaving a real corporate proxy alone. `relaycrew run` scopes the variables to the `claude` process either way.
 

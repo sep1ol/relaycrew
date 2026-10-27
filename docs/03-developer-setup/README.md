@@ -26,12 +26,16 @@ read -r -s -p 'RelayCrew member key: ' TEAM_GATEWAY_KEY
 export TEAM_GATEWAY_KEY
 printf '\n'
 export ANTHROPIC_BASE_URL=https://gateway.example.com
-export ANTHROPIC_API_KEY="$TEAM_GATEWAY_KEY"
-unset ANTHROPIC_AUTH_TOKEN
-claude
+unset ANTHROPIC_API_KEY
+export ANTHROPIC_AUTH_TOKEN="$TEAM_GATEWAY_KEY"
+printf 'Authorization: Bearer %s\n' "$ANTHROPIC_AUTH_TOKEN" | \
+	curl --fail-with-body --silent --show-error --header @- \
+		"$ANTHROPIC_BASE_URL/relaycrew/me"
 ```
 
-Replace the hostname with your gateway. For an SSH tunnel, use the local tunnel address instead. See [Claude Code configuration](../teams.md#configure-claude-code) for direct HTTP and subscription-preserving MITM modes.
+Replace the hostname with your gateway. For an SSH tunnel, use the local tunnel address instead. The member token overrides a saved Claude login without the API-key approval prompt. Your personal login remains saved.
+
+After the check returns your member details, start `claude`. Run `/status` and confirm the gateway URL and `ANTHROPIC_AUTH_TOKEN` credential source. See [Claude Code configuration](../teams.md#configure-claude-code) for the token check, persistent settings, troubleshooting, and subscription-preserving MITM mode. Shell exports apply only to that terminal and its children. Restart existing Claude sessions after changing the configuration.
 
 ## Connect Codex
 

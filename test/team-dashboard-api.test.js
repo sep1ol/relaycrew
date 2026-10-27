@@ -56,8 +56,8 @@ async function fixture(t, { reload, config = baseConfig() } = {}) {
     if (previous === undefined) delete process.env.RELAYCREW_CONFIG; else process.env.RELAYCREW_CONFIG = previous;
     if (previousWait === undefined) delete process.env.RELAYCREW_CONFIG_LOCK_WAIT_MS; else process.env.RELAYCREW_CONFIG_LOCK_WAIT_MS = previousWait;
   });
-  const call = async (route = '/relaycrew/team', body, key = ADMIN) => {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}${route}`, { method: body === undefined ? 'GET' : 'POST', headers: key === null ? {} : { 'x-api-key': key }, ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }) });
+  const call = async (route = '/relaycrew/team', body, key = ADMIN, headers = {}) => {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}${route}`, { method: body === undefined ? 'GET' : 'POST', headers: { ...(key === null ? {} : { 'x-api-key': key }), ...headers }, ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }) });
     return { status: response.status, headers: response.headers, body: await response.json() };
   };
   return { config, path, call, read: async () => JSON.parse(await readFile(path, 'utf8')), reads: () => reads, reloads: () => reloads };
@@ -220,5 +220,15 @@ test('rotation, revocation and removed grants abort live traffic and release con
     res.emit('finish');
     res.emit('close');
     assert.equal(controller.active.get('alice'), 0);
+  }
+});
+
+test('team administration and history accept only the selected administrator credential', async t => {
+  const f = await fixture(t);
+  for (const route of ['/relaycrew/team', '/relaycrew/usage/history?scope=clients&window=24h&step=15m&metric=requests']) {
+    assert.equal((await f.call(route, undefined, null, { authorization: `Bearer ${ADMIN}` })).status, 200);
+    assert.equal((await f.call(route, undefined, '', { authorization: `Bearer ${ADMIN}` })).status, 401);
+    assert.equal((await f.call(route, undefined, 'wrong', { authorization: `Bearer ${ADMIN}` })).status, 401);
+    assert.equal((await f.call(route, undefined, MEMBER, { authorization: `Bearer ${ADMIN}` })).status, 403);
   }
 });

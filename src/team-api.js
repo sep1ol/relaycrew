@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { httpClientKey } from './http-client-auth.js';
 import { atomicConfigUpdate, getConfigPath, loadConfigPersistingIds } from './config.js';
 import { classificationPath } from './classification-path.js';
 import { teamAccessFor } from './team-access.js';
@@ -8,7 +9,7 @@ import { TeamConfigError, applyTeamAction, configuredMembers, redactMember, team
  * @param {any} req @param {Record<string, any>} config
  */
 export function authenticatedTeamAdmin(req, config) {
-  const key = req.headers?.['x-api-key'];
+  const key = httpClientKey(req);
   const admin = config.proxy?.apiKey;
   if (typeof key !== 'string' || !key || typeof admin !== 'string' || !admin || req.tcClient) return false;
   if ((config.proxy?.clientKeys ?? []).some((/** @type {{key?:string}} */ member) => member?.key === key)) return false;

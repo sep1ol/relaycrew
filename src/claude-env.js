@@ -149,10 +149,6 @@ export function clearSelfProxyEnvLines(port, env = process.env) {
 // NODE_EXTRA_CA_CERTS. base-URL mode only redirects the Anthropic base URL and
 // leaves other hosts alone.
 //
-// No ANTHROPIC_API_KEY is emitted: loopback clients are exempt from the proxy's
-// key gate, and setting it would drop Claude Code out of subscription mode (and
-// its full model access). Remote clients that aren't on loopback must add the
-// proxy key themselves.
 // `account` pins the session to one account (TC_ACCT), exactly as `relaycrew
 // run` does: in MITM mode it rides in the proxy URL's userinfo and reaches the
 // proxy as the CONNECT's Basic username; in base-URL mode it becomes a
@@ -197,7 +193,7 @@ export function buildClaudeEnvLines({ port, useMitm = true, caPath = null, holdS
     // Clear any stale base-URL so the two modes don't stack in one shell.
     lines.push('unset ANTHROPIC_BASE_URL');
   } else {
-    if (requireProxyAuth) lines.push(`export ANTHROPIC_API_KEY=${shellQuote(proxyApiKey)}`);
+    if (requireProxyAuth) lines.push('unset ANTHROPIC_API_KEY', `export ANTHROPIC_AUTH_TOKEN=${shellQuote(proxyApiKey)}`);
     const prefix = pin ? `/tc-acct/${encodePinComponent(pin)}` : '';
     lines.push(`export ANTHROPIC_BASE_URL=http://localhost:${port}${prefix}`);
   }

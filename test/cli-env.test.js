@@ -81,3 +81,48 @@ test('env rejects contradictory mode flags without writing to stdout', async () 
   assert.equal(result.stdout, '');
   assert.match(result.stderr, /either --mitm or --no-mitm/);
 });
+
+test('team env selects AUTH_TOKEN and clears the old API-key credential', async () => {
+  const result = await runEnv(['--no-mitm'], {
+    config: { proxy: { port: 3456, apiKey: 'team-gateway-key', teamMode: true, clientKeys: [] } },
+    env: { ANTHROPIC_API_KEY: 'inherited-api-key', ANTHROPIC_AUTH_TOKEN: 'inherited-token' },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^unset ANTHROPIC_API_KEY$/m);
+  assert.match(result.stdout, /^export ANTHROPIC_AUTH_TOKEN='team-gateway-key'$/m);
+  assert.match(result.stderr, /ANTHROPIC_AUTH_TOKEN=<gateway-key>/);
+});
+
+test('run passes the team bearer to Claude and suppresses the local-login hint', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'relaycrew-run-auth-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const server = (await import('node:net')).createServer(socket => socket.end());
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const port = server.address().port;
+  const configPath = join(dir, 'config.json');
+  const stubPath = join(dir, 'claude');
+  await writeFile(stubPath, `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({token: process.env.ANTHROPIC_AUTH_TOKEN, apiKey: process.env.ANTHROPIC_API_KEY ?? null, base: process.env.ANTHROPIC_BASE_URL}));\nprocess.exit(1);\n`, { mode: 0o700 });
+  await writeFile(configPath, JSON.stringify({
+    proxy: { port, apiKey: 'fixture-team-key', teamMode: true, clientKeys: [] },
+    accounts: [{ id: 'fixture-account', name: 'fixture', type: 'apikey', apiKey: 'fixture-upstream-key' }], autoUpdate: false,
+  }));
+  const child = spawn(process.execPath, [cliPath, 'run', '--no-mitm'], {
+    env: { ...process.env, HOME: dir, XDG_CONFIG_HOME: dir, CLAUDE_CONFIG_DIR: dir,
+      PATH: `${dir}:${process.env.PATH}`, RELAYCREW_CONFIG: configPath, RELAYCREW_DISABLE_AUTOUPDATE: '1',
+      ANTHROPIC_API_KEY: 'inherited-api-key', ANTHROPIC_AUTH_TOKEN: 'inherited-token', CLAUDE_CODE_OAUTH_TOKEN: '' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const code = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('run command did not exit')); }, 15_000);
+    child.once('error', reject);
+    child.once('close', code => { clearTimeout(timer); resolve(code); });
+  });
+  assert.equal(code, 1, stderr);
+  assert.deepEqual(JSON.parse(stdout), { token: 'fixture-team-key', apiKey: null, base: `http://localhost:${port}` });
+  assert.doesNotMatch(stderr, /no login of its own|claude auth login|expired OAuth session/);
+});

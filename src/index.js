@@ -1542,7 +1542,8 @@ async function envCommand() {
     process.stderr.write(`# note: proxy not running on port ${port} — start it with: relaycrew server\n`);
   }
   if (config.proxy?.apiKey) {
-    process.stderr.write(`# remote (non-loopback) clients must also present the proxy key: ANTHROPIC_API_KEY=<proxy.apiKey> (base-URL), or http://<key>@host:${port} (MITM)\n`);
+    process.stderr.write(`# remote (non-loopback) clients must also present their gateway key: unset ANTHROPIC_API_KEY; ANTHROPIC_AUTH_TOKEN=<gateway-key> (base-URL), or http://<key>@host:${port} (MITM)\n`);
+    process.stderr.write('# WebSocket upgrades require x-api-key; Bearer authentication applies to HTTP requests only.\n');
   }
 }
 
@@ -1621,10 +1622,10 @@ async function runCommand() {
       }
       delete env.ANTHROPIC_BASE_URL;
     } else {
-      if (config.proxy?.teamMode === true) env.ANTHROPIC_API_KEY = config.proxy.apiKey;
-      // Only set ANTHROPIC_BASE_URL — Claude Code keeps its own OAuth token
-      // which the proxy accepts from localhost. Not setting ANTHROPIC_API_KEY
-      // lets Claude Code stay in subscription mode (full model access).
+      if (config.proxy?.teamMode === true) {
+        env.ANTHROPIC_AUTH_TOKEN = config.proxy.apiKey;
+        delete env.ANTHROPIC_API_KEY;
+      }
       // TC_ACCT wins; relaycrew builds the pinned URL itself rather than making
       // the caller hand-write one. Otherwise an existing /tc-acct/ base URL
       // pointing at this proxy is preserved for configs written against 1.1.10.
@@ -1681,7 +1682,7 @@ async function runCommand() {
   // that quickly and that badly, say which login it was. Only a hint: the
   // child's own output is what was shown, and a fast non-zero exit with a
   // stale local login is the shape of that failure, not proof of it.
-  if (result.status && Date.now() - startedAt < LOCAL_LOGIN_HINT_WINDOW_MS && !env.ANTHROPIC_API_KEY && !env.CLAUDE_CODE_OAUTH_TOKEN) {
+  if (result.status && Date.now() - startedAt < LOCAL_LOGIN_HINT_WINDOW_MS && !env.ANTHROPIC_API_KEY && !env.ANTHROPIC_AUTH_TOKEN && !env.CLAUDE_CODE_OAUTH_TOKEN) {
     const hint = await localLoginHint({ read: importCredentials, expired: isTokenExpired });
     if (hint) console.error(`[RelayCrew] ${hint}`);
   }

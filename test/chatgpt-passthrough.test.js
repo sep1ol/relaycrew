@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { generateCertChain } from '../src/x509.js';
 import { createConnectHandler } from '../src/mitm.js';
 import { AccountManager } from '../src/account-manager.js';
-import { createProxyRequestListener, clientPassthroughOrigin } from '../src/server.js';
+import { createProxyServer, createProxyRequestListener, clientPassthroughOrigin } from '../src/server.js';
 import { allowLoopbackForward } from '../src/forward-target.js';
 
 // With Codex accounts in the pool the MITM intercepts all of chatgpt.com, but the
@@ -205,5 +205,26 @@ test('the Codex Responses WebSocket is refused, so the client falls back to pool
     assert.ok(logs.some(l => /refusing a codex WebSocket for \/backend-api\/codex\/responses/.test(l)), logs.join('\n'));
   } finally {
     tlsSock.destroy(); closeHard(proxy); closeHard(upstream);
+  }
+});
+
+test('HTTP gateway authentication consumes only its own bearer on a configured Codex passthrough', async () => {
+  const up = await recordingUpstream();
+  const account = { ...codex('c', { upstream: `http://127.0.0.1:${up.port}` }), index: 0, provider: 'codex' };
+  const config = { proxy: { apiKey: 'gateway-key', trustLoopback: false }, upstream: 'https://api.anthropic.invalid', accounts: [claude('a'), codex('c')] };
+  const proxy = createProxyServer(refusing([account]), config);
+  const port = await listen(proxy);
+  try {
+    for (const both of [false, true]) {
+      const reply = await request(port, { path: '/backend-api/wham/accounts/check', host: 'chatgpt.com', headers: { authorization: 'Bearer gateway-key', ...(both ? { 'x-api-key': 'gateway-key' } : {}) } });
+      assert.equal(reply.status, 200);
+    }
+    const own = await request(port, { path: '/backend-api/wham/accounts/check', host: 'chatgpt.com', headers: { authorization: 'Bearer own-codex-login', 'x-api-key': 'gateway-key' } });
+    assert.equal(own.status, 200);
+    assert.equal(up.seen.length, 3);
+    assert.deepEqual(up.seen.map(entry => entry.authorization), [null, null, 'Bearer own-codex-login']);
+    assert.ok(!JSON.stringify(up.seen).includes('gateway-key'));
+  } finally {
+    closeHard(proxy); closeHard(up.server);
   }
 });

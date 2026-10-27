@@ -184,3 +184,35 @@ test('the link-local range is refused by literal address', async () => {
     proxy.close();
   }
 });
+
+for (const { name, proxyConfig, headers, expected, status = 200 } of [
+  { name: 'bearer-only shared key', proxyConfig: { apiKey: 'tc-shared', trustLoopback: false }, headers: { authorization: 'Bearer tc-shared' } },
+  { name: 'bearer-only named key', proxyConfig: { clientKeys: [{ name: 'alice', key: 'tc-client' }], trustLoopback: false }, headers: { authorization: 'Bearer tc-client' } },
+  { name: 'both proxy credentials', proxyConfig: { apiKey: 'tc-shared', trustLoopback: false }, headers: { 'x-api-key': 'tc-shared', authorization: 'Bearer tc-shared' } },
+  { name: 'provider bearer with proxy key', proxyConfig: { apiKey: 'tc-shared', trustLoopback: false }, headers: { 'x-api-key': 'tc-shared', authorization: 'Bearer destination-token' }, expected: 'Bearer destination-token' },
+  { name: 'provider bearer on exempt loopback', proxyConfig: { apiKey: 'tc-shared' }, headers: { authorization: 'Bearer destination-token' }, expected: 'Bearer destination-token' },
+  { name: 'provider bearer with no configured key', proxyConfig: {}, headers: { authorization: 'Bearer destination-token' }, expected: 'Bearer destination-token' },
+  { name: 'invalid x-api-key never falls back', proxyConfig: { apiKey: 'tc-shared', trustLoopback: false }, headers: { 'x-api-key': 'invalid', authorization: 'Bearer tc-shared' }, status: 401 },
+]) {
+  test(`HTTP forwarding scopes bearer credentials: ${name}`, async () => {
+    const seen = [];
+    const target = http.createServer((req, res) => { seen.push(req.headers); res.end('ok'); });
+    const proxy = createProxyServer(noRouteManager, { proxy: proxyConfig });
+    allowLoopbackForward(proxy);
+    try {
+      const targetPort = await listen(target);
+      const proxyPort = await listen(proxy);
+      const reply = await proxyRequest({ proxyPort, absoluteUrl: `http://127.0.0.1:${targetPort}/`, headers });
+      assert.equal(reply.status, status);
+      assert.equal(seen.length, status === 200 ? 1 : 0);
+      if (status === 200) {
+        assert.equal(seen[0].authorization, expected);
+        assert.ok(!JSON.stringify(seen).includes('tc-shared'));
+        assert.ok(!JSON.stringify(seen).includes('tc-client'));
+      }
+    } finally {
+      proxy.closeAllConnections(); target.closeAllConnections();
+      proxy.close(); target.close();
+    }
+  });
+}

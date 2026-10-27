@@ -209,3 +209,17 @@ test('the local-login hint fires for a missing or stale login and not for a live
   assert.equal(await localLoginHint({ read: async () => ({ accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() + 3600_000 }), expired }), null);
   assert.equal(await localLoginHint({ read: async () => ({ accessToken: 'a', refreshToken: 'r' }), expired }), null, 'no expiry recorded is not evidence');
 });
+
+test('authenticated base-URL setup uses a quoted bearer and clears an inherited API key', () => {
+  const key = "team key'$(echo unsafe)";
+  const lines = buildClaudeEnvLines({ port: 3456, useMitm: false, requireProxyAuth: true, proxyApiKey: key });
+  assert.ok(lines.includes('unset ANTHROPIC_API_KEY'));
+  const result = spawnSync('/bin/sh', ['-c', `${lines.join('\n')}\nprintf '%s\n%s' "$ANTHROPIC_AUTH_TOKEN" "\${ANTHROPIC_API_KEY-unset}"`], {
+    encoding: 'utf8', env: { ...process.env, ANTHROPIC_API_KEY: 'inherited-api-key', ANTHROPIC_AUTH_TOKEN: 'inherited-token' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `${key}\nunset`);
+  const mitm = buildClaudeEnvLines({ port: 3456, requireProxyAuth: true, proxyApiKey: 'team-key', caPath: '/x' });
+  assert.ok(mitm.includes('export HTTPS_PROXY=http://:team-key@127.0.0.1:3456'));
+  assert.ok(!mitm.some(line => line.includes('ANTHROPIC_AUTH_TOKEN') || line.includes('ANTHROPIC_API_KEY')));
+});

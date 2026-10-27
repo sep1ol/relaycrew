@@ -91,7 +91,65 @@ function raw(port, lines) {
     socket.once('end', () => resolve(''));
   });
 }
+const bearer = (key = ALICE) => ({ key: null, headers: { authorization: `Bearer ${key}` } });
 const me = (port, key = ALICE) => request(port, { key, method: 'GET', path: '/relaycrew/me' });
+
+test('bearer-only member authentication identifies the member and admits inference', { timeout: 10000 }, async t => {
+  const f = await fixture(t);
+  const auth = { key: null, headers: { authorization: `Bearer ${ALICE}` } };
+  const own = await request(f.port, { ...auth, method: 'GET', path: '/relaycrew/me' });
+  assert.equal(own.status, 200);
+  assert.equal(own.json().member, 'alice');
+  assert.equal((await request(f.port, auth)).status, 200);
+  assert.equal(f.seen[0].headers.authorization, 'Bearer upstream-beta');
+  const usage = await request(f.port, { ...auth, method: 'GET', path: '/relaycrew/me' });
+  assert.equal(usage.json().usage.requests, 1);
+});
+
+test('HTTP credentials preserve member boundaries, precedence and revocation', { timeout: 10000 }, async t => {
+  const f = await fixture(t);
+  for (const key of ['wrong-key', DISABLED, '']) {
+    assert.equal((await request(f.port, bearer(key))).status, 401);
+  }
+  for (const key of ['', 'wrong-key']) {
+    assert.equal((await request(f.port, { key, headers: { authorization: `Bearer ${ADMIN}` } })).status, 401);
+  }
+  for (const path of ['/relaycrew/status', '/relaycrew/team']) {
+    assert.equal((await request(f.port, { ...bearer(), path, method: 'GET' })).status, 403);
+  }
+  assert.equal((await request(f.port, { ...bearer(), path: '/tc-acct/alpha/v1/messages' })).status, 403);
+  assert.equal((await request(f.port, { key: ALICE, headers: { authorization: `Bearer ${ADMIN}` }, method: 'GET', path: '/relaycrew/status' })).status, 403);
+  assert.equal((await request(f.port, { key: ADMIN, headers: { authorization: `Bearer ${ALICE}` }, method: 'GET', path: '/relaycrew/status' })).status, 200);
+  assert.equal((await request(f.port, { ...bearer(ADMIN), method: 'GET', path: '/relaycrew/status' })).status, 200);
+  assert.equal((await request(f.port, { key: ALICE, headers: { authorization: 'Bearer own-provider-login' } })).status, 200);
+  f.config.proxy.clientKeys[0].key = 'rotated-alice';
+  assert.equal((await request(f.port, bearer())).status, 401);
+  assert.equal((await request(f.port, bearer('rotated-alice'))).status, 200);
+  f.config.proxy.clientKeys[0].disabled = true;
+  assert.equal((await request(f.port, bearer('rotated-alice'))).status, 401);
+  assert.equal(f.seen.length, 2);
+});
+
+test('HTTP auth parses a single credential on the real socket', { timeout: 10000 }, async t => {
+  const f = await fixture(t);
+  const cases = [
+    [[`Authorization: bEaReR \t${ALICE} \t`], 200],
+    [['Authorization: Bearer'], 401],
+    [[`Authorization: Basic ${ALICE}`], 401],
+    [[`Authorization: Bearer ${ALICE} extra`], 401],
+    [[`Authorization: Bearer ${ALICE},${ADMIN}`], 401],
+    [[`Authorization: Bearer ${ALICE}`, `aUtHoRiZaTiOn: Bearer ${ADMIN}`], 401],
+    [[`x-api-key: ${ALICE}`, `X-API-KEY: ${ADMIN}`, `Authorization: Bearer ${ADMIN}`], 401],
+    [[`x-api-key: ${ALICE},${ADMIN}`, `Authorization: Bearer ${ADMIN}`], 401],
+    [['x-api-key:', `Authorization: Bearer ${ADMIN}`], 401],
+    [[`x-api-key: ${ALICE}`, 'Authorization: unrelated provider value'], 200],
+  ];
+  for (const [headers, status] of cases) {
+    const reply = await raw(f.port, ['GET /relaycrew/me HTTP/1.1', 'Host: localhost', 'Connection: close', ...headers]);
+    assert.match(reply, new RegExp(`^HTTP/1.1 ${status} `), headers.join('; '));
+  }
+  assert.equal(f.seen.length, 0);
+});
 
 test('team mode requires a valid enabled key even on loopback and keeps administrator access', { timeout: 10000 }, async t => {
   const f = await fixture(t);
@@ -176,7 +234,7 @@ for (const status of [429, 503]) {
           res.end(JSON.stringify({ type: 'error', error: { type: status === 429 ? 'rate_limit_error' : 'overloaded_error' } }));
         } else success(res);
       } });
-      const reply = await request(f.port);
+      const reply = await request(f.port, bearer());
       if (siblingAllowed) assert.equal(reply.status, 200);
       else assert.ok([429, 503].includes(reply.status), `unexpected status ${reply.status}`);
       assert.deepEqual(f.seen.map(entry => entry.headers.authorization), siblingAllowed ? ['Bearer upstream-beta', 'Bearer upstream-gamma'] : ['Bearer upstream-beta']);
@@ -195,10 +253,10 @@ test('proxy credentials never reach the inference upstream', { timeout: 10000 },
   assert.ok(!JSON.stringify(f.seen).includes(ALICE));
 });
 
-function openStream(port, id, key = ALICE) {
+function openStream(port, id, key = ALICE, useBearer = false) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/v1/messages',
-      headers: { 'x-api-key': key, 'content-type': 'application/json', 'x-test-stream': id },
+      headers: { ...(useBearer ? { authorization: `Bearer ${key}` } : { 'x-api-key': key }), 'content-type': 'application/json', 'x-test-stream': id },
     }, res => {
       const done = new Promise(doneResolve => { res.once('end', doneResolve); res.once('close', doneResolve); });
       res.once('data', () => resolve({ res, done, abort: () => res.destroy() }));
@@ -263,9 +321,9 @@ test('an explicit concurrency limit applies to the member only', { timeout: 1000
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.write('data: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n');
   } });
-  const stream = await openStream(f.port, 'limited');
+  const stream = await openStream(f.port, 'limited', ALICE, true);
   assert.deepEqual((await me(f.port)).json().concurrency, { active: 1, limit: 1 });
-  assert.equal((await request(f.port)).status, 429);
+  assert.equal((await request(f.port, bearer())).status, 429);
   assert.equal((await request(f.port, { key: ADMIN })).status, 200);
   held.end('data: {"type":"message_stop"}\n\n');
   await stream.done;
@@ -331,6 +389,7 @@ test('CONNECT authenticates loopback keys before destination handling', { timeou
       ...(key == null ? [] : [`Proxy-Authorization: Bearer ${key}`])]);
     assert.match(reply, /^HTTP\/1\.1 407 /);
   }
+  assert.match(await raw(f.port, ['CONNECT invalid:authority:443 HTTP/1.1', 'Host: localhost', `Authorization: Bearer ${ADMIN}`]), /^HTTP\/1\.1 407 /);
   for (const key of [ALICE, ADMIN]) {
     const reply = await raw(f.port, ['CONNECT invalid:authority:443 HTTP/1.1', 'Host: localhost', `Proxy-Authorization: Bearer ${key}`]);
     assert.match(reply, /^HTTP\/1\.1 400 /);
@@ -349,6 +408,7 @@ test('WebSocket upgrades require a valid key and permit only administrators to r
     headers = req.headers;
     socket.end('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');
   });
+  assert.match(await raw(f.port, ['GET /v1/messages HTTP/1.1', 'Host: localhost', 'Connection: Upgrade', 'Upgrade: websocket', `Authorization: Bearer ${ADMIN}`]), /^HTTP\/1\.1 401 /);
   const handshake = key => raw(f.port, ['GET /v1/messages HTTP/1.1', 'Host: localhost', 'Connection: Upgrade', 'Upgrade: websocket',
     'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', ...(key == null ? [] : [`x-api-key: ${key}`])]);
   for (const key of [null, 'wrong-key', DISABLED]) assert.match(await handshake(key), /^HTTP\/1\.1 401 /);
@@ -389,6 +449,13 @@ test('team mode stays opt-in for an existing loopback proxy', { timeout: 10000 }
   assert.equal((await request(f.port, { key: null })).status, 200);
   assert.equal((await request(f.port, { key: ALICE, method: 'GET', path: '/relaycrew/status' })).status, 200);
   assert.equal(f.seen[0].headers.authorization, 'Bearer upstream-alpha');
+});
+
+test('HTTP x-api-key retains exact matching for legacy configured keys', { timeout: 10000 }, async t => {
+  const key = 'legacy shared,key with spaces';
+  const f = await fixture(t, { proxyConfig: { apiKey: key, trustLoopback: false } });
+  assert.equal((await request(f.port, { key })).status, 200);
+  assert.equal(f.seen.length, 1);
 });
 
 test('wildcard grants allow every account while an empty grant never forwards', { timeout: 10000 }, async t => {

@@ -306,14 +306,48 @@ For direct HTTP mode through the SSH tunnel, use a fresh shell for this gateway 
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
-unset ANTHROPIC_AUTH_TOKEN
-export ANTHROPIC_API_KEY="$TEAM_GATEWAY_KEY"
-claude
+unset ANTHROPIC_API_KEY
+export ANTHROPIC_AUTH_TOKEN="$TEAM_GATEWAY_KEY"
 ```
 
-For HTTPS, set `ANTHROPIC_BASE_URL=https://gateway.example.com`. Keep `TEAM_GATEWAY_KEY` from the preceding prompt in this shell, or enter it again. Existing managed settings or a credential helper may also affect authentication; see the [Claude Code gateway instructions](https://code.claude.com/docs/en/llm-gateway).
+For HTTPS, set `ANTHROPIC_BASE_URL=https://gateway.example.com`. Keep `TEAM_GATEWAY_KEY` from the preceding prompt in this shell, or enter it again.
 
-Send a short prompt, then check the member's counters in Team or Usage. This check uses provider capacity. Direct mode uses Claude Code's API-key authentication path and can differ from subscription sign-in.
+`ANTHROPIC_AUTH_TOKEN` sends the member key as `Authorization: Bearer`. It takes precedence over a saved Claude login immediately. `ANTHROPIC_API_KEY` also remains supported through `x-api-key`, but Claude asks for approval in interactive mode. Declining that prompt can leave the client using its saved credentials against the gateway. Use `ANTHROPIC_AUTH_TOKEN` for new setups. See the [official Claude Code gateway instructions](https://code.claude.com/docs/en/llm-gateway-connect).
+
+Before opening Claude, verify the exact token and URL without consuming provider capacity:
+
+```bash
+printf 'Authorization: Bearer %s\n' "$ANTHROPIC_AUTH_TOKEN" | \
+	curl --fail-with-body --silent --show-error --header @- \
+		"$ANTHROPIC_BASE_URL/relaycrew/me"
+```
+
+Expect your member name, grants, and concurrency limit. Start `claude`, run `/status`, and confirm the gateway URL and `ANTHROPIC_AUTH_TOKEN` credential source. Send a short prompt, then check the member's counters in Team or Usage. The prompt uses provider capacity.
+
+Your personal Claude login stays saved. Gateway mode can differ from subscription sign-in, including access to claude.ai connectors. To return to your saved login, remove the gateway variables from every place you persisted them and start a new session.
+
+#### Persist the developer configuration
+
+Shell exports reach only that shell and its children. For Claude started by an editor or a background agent, merge an `env` block into the developer's `~/.claude/settings.json`:
+
+```json
+{
+	"env": {
+		"ANTHROPIC_BASE_URL": "https://gateway.example.com",
+		"ANTHROPIC_AUTH_TOKEN": "<your-member-key>"
+	}
+}
+```
+
+Replace the placeholders privately and preserve unrelated settings. Remove an old gateway `ANTHROPIC_API_KEY` entry from the same block. Never commit a member key to project settings. Claude settings can override shell variables, so keep the URL and credential consistent.
+
+Tools that launch Claude with user settings disabled need the exports in their own launch environment. Restart the terminal, editor, or agent host after changing its configuration.
+
+#### Troubleshoot a 401
+
+If `/relaycrew/me` returns `401`, check the gateway URL and ask the administrator to confirm the member is enabled and the key has not been rotated. If the check succeeds but Claude returns `401`, run `/status` and inspect the credential source and base URL. Replace old gateway API-key settings with `ANTHROPIC_AUTH_TOKEN`, check managed settings or a credential helper, and restart the affected Claude session. You do not need to log out of your personal account.
+
+RelayCrew accepts `x-api-key` or Bearer authentication for HTTP requests. When both headers are present, `x-api-key` determines the gateway identity, even if it is invalid. This preserves Codex's separate provider authentication. WebSocket upgrades still use `x-api-key`; CONNECT tunnels use `Proxy-Authorization`.
 
 To retain the client's subscription authentication, use [MITM proxy mode](proxy-modes.md) with the member key in `Proxy-Authorization`. Obtain the gateway's public CA certificate from the administrator through a trusted channel and set `NODE_EXTRA_CA_CERTS`. Never distribute a private certificate key. Through the SSH tunnel, `HTTPS_PROXY` has the form `http://:<member-key>@127.0.0.1:3456`; an account pin can use the username slot. Percent-encode userinfo components. Team mode refuses unrelated tunnel destinations and Remote Control. An HTTPS reverse proxy alone does not expose a forward CONNECT proxy; use the SSH tunnel for this mode.
 

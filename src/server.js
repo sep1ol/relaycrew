@@ -23,6 +23,7 @@ import { safeLine } from './safe-text.js';
 import { forwardRefusal, guardedLookup, FORBIDDEN_FORWARD } from './forward-target.js';
 import { renderDashboardHtml, dashboardCsp } from './dashboard.js';
 import { handleTeamRequest } from './team-api.js';
+import { httpClientKey, forwardedBearerToken } from './http-client-auth.js';
 import { handleUsageHistoryRequest } from './usage-history.js';
 import { createUsageRecorder, resolveUsageDimensions, usageDimensionHeaderNames } from './client-usage.js';
 import { responsesEventUsage, isResponsesBody, normalizeResponsesUsage } from './responses-usage.js';
@@ -400,7 +401,7 @@ function usableClientKeys(clientKeys) {
   return clientKeys.filter(e => typeof e?.name === 'string' && e.name.trim() && e.key);
 }
 
-/** @param {Record<string, any>|undefined} proxyConfig @param {unknown} presented @returns {{ok: boolean, client: string|null, identity?: import('./team-access.js').TeamIdentity|null}} */
+/** @param {Record<string, any>|null|undefined} proxyConfig @param {unknown} presented @returns {{ok: boolean, client: string|null, identity?: import('./team-access.js').TeamIdentity|null}} */
 export function resolveClientAuth(proxyConfig, presented) {
   if (proxyConfig?.teamMode === true) return authenticateTeam(proxyConfig, presented);
   const shared = proxyConfig?.apiKey;
@@ -413,6 +414,13 @@ export function resolveClientAuth(proxyConfig, presented) {
   }
   if (shared && safeKeyEqual(presented, shared)) return { ok: true, client: null };
   return { ok: false, client: null };
+}
+
+/** @param {any} req @param {Record<string, any>|null|undefined} proxyConfig */
+function ownsHttpBearer(req, proxyConfig) {
+  const token = forwardedBearerToken(req);
+  return token !== undefined && !resolveClientAuth(proxyConfig, undefined).ok
+    && resolveClientAuth(proxyConfig, token).ok;
 }
 
 // Control-plane writes that change the config file, with the refusal a
@@ -507,9 +515,8 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null,
       // request (not captured at creation) so a reload that edits clientKeys
       // applies to a running server, matching how eventLogging/blockedModels
       // are read live further down the pipeline.
-      const clientKey = req.headers['x-api-key'];
       const isLocal = loopbackExempt(req.headers, req.socket.remoteAddress, config.proxy);
-      const auth = resolveClientAuth(config.proxy, clientKey);
+      const auth = resolveClientAuth(config.proxy, httpClientKey(req));
       if (!auth.ok && !isLocal) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -1284,10 +1291,12 @@ export function relayHttpForward(req, res, stripOverage = false, /** @type {Reco
   const transport = target.protocol === 'http:' ? http : https;
   /** @type {import('node:http').OutgoingHttpHeaders} */
   const headers = {};
+  const stripBearer = ownsHttpBearer(req, proxyConfig);
   for (const [key, value] of Object.entries(req.headers)) {
     const lk = key.toLowerCase();
     // Drop hop-by-hop + proxy-control headers; `host` is reset from the target.
     if (lk.startsWith(':') || HOP_BY_HOP_HEADERS.has(lk) || lk === 'proxy-connection') continue;
+    if (lk === 'authorization' && stripBearer) continue;
     // x-api-key may authenticate to this proxy or to the destination API.
     // Consume our own keys, preserving unrelated application credentials. With
     // no usable key configured every value "resolves", so that case keeps it.
@@ -1639,10 +1648,10 @@ export function createProxyRequestListener({ accountManager, upstream, logDir = 
         teamError(res, 403, 'Member requests must use a pooled inference endpoint');
         return;
       }
-      if (passthrough) { await relayStream(req, res, passthrough, sx, shouldStripOverageHeaders(config)); return; }
+      if (passthrough) { await relayStream(req, res, passthrough, sx, shouldStripOverageHeaders(config), config.proxy); return; }
 
       const classifiedPath = classificationPath(req.url);
-      if (isClientCredentialPath(classifiedPath)) { await relayStream(req, res, upstream, sx, shouldStripOverageHeaders(config)); return; }
+      if (isClientCredentialPath(classifiedPath)) { await relayStream(req, res, upstream, sx, shouldStripOverageHeaders(config), config.proxy); return; }
 
       // MITM-mode pin. A CONNECT carrying `Proxy-Authorization: Basic <acct>:…`
       // has no URL to hang a `/tc-acct/` prefix on — the path inside the tunnel
@@ -2061,24 +2070,23 @@ function sxAgent(sx, targetHost) {
 }
 
 /**
- * Relay a request to upstream with the client's OWN headers intact (including
- * its authorization) — used for Remote Control (/v1/code/*), whose event
+ * Relay a request with the client's endpoint credentials, consuming gateway
+ * credentials. Used for Remote Control (/v1/code/*), whose event
  * stream is a long-poll: the client keeps the request open indefinitely and
  * the upstream may withhold response headers for minutes between events. No
  * buffering, no timeout, no reconstruction — just pipe bytes both ways as they
  * arrive, exactly like a transparent proxy would.
  */
-function relayStream(req, res, upstream, sx, stripOverage = false) {
+function relayStream(req, res, upstream, sx, stripOverage = false, proxyConfig = null) {
   const target = new URL(`${upstream}${req.url}`);
   /** @type {import('node:http').OutgoingHttpHeaders} */
   const headers = {};
+  const stripBearer = ownsHttpBearer(req, proxyConfig);
   for (const [key, value] of Object.entries(req.headers)) {
     const lk = key.toLowerCase();
     if (lk.startsWith(':') || HOP_BY_HOP_HEADERS.has(lk) || lk === 'accept-encoding') continue;
-    // The client's identity on this path is its bearer; x-api-key is how it
-    // authenticated to THIS proxy, so relaying it would hand the operator's
-    // proxy key to upstream.
     if (lk === 'x-api-key') continue;
+    if (lk === 'authorization' && stripBearer) continue;
     headers[key] = value;
   }
 
