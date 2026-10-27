@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,10 +50,26 @@ async function readDistribute(configPath) {
 
 test('distribute with no argument reports the current state', async () => {
   const configPath = await writeConfig();
+  const before = await readFile(configPath, 'utf8');
   const res = await runCli(configPath, ['distribute']);
   assert.equal(res.code, 0, res.stderr);
   assert.match(res.stdout, /Session distribution: off/);
+  assert.match(res.stdout, /relaycrew distribute <on\|off\|adaptive\|load>/);
+  assert.match(res.stdout, /On \(even\):/);
+  assert.match(res.stdout, /Adaptive:/);
+  assert.match(res.stdout, /Load:/);
   assert.doesNotMatch(res.stdout + res.stderr, /ReferenceError/);
+  assert.equal(await readFile(configPath, 'utf8'), before);
+});
+
+test('distribute without a config creates and reports load distribution', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'relaycrew-distribute-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const configPath = join(dir, 'config.json');
+  const result = await runCli(configPath, ['distribute']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Session distribution: load/);
+  assert.equal(await readDistribute(configPath), 'load');
 });
 
 test('distribute on writes the setting', async () => {
@@ -84,12 +100,34 @@ test('distribute off says the running sessions drain', async () => {
   assert.match(res.stdout, /drain/);
 });
 
+test('distribute load writes and reports the mode', async () => {
+  const configPath = await writeConfig();
+  const set = await runCli(configPath, ['distribute', 'load']);
+  assert.equal(set.code, 0, set.stderr);
+  assert.equal(await readDistribute(configPath), 'load');
+  assert.match(set.stdout, /Session distribution by load/);
+
+  const read = await runCli(configPath, ['distribute']);
+  assert.equal(read.code, 0, read.stderr);
+  assert.match(read.stdout, /Session distribution: load/);
+});
+
+test('general help advertises load distribution for new configs', async () => {
+  const configPath = await writeConfig();
+  const result = await runCli(configPath, ['--help']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /distribute \[on\|off\|adaptive\|load\]/);
+  assert.match(result.stdout, /load for new configs/);
+});
+
 test('setting what is already set does not rewrite the config', async () => {
-  const configPath = await writeConfig(true);
-  const before = await readFile(configPath, 'utf8');
-  const res = await runCli(configPath, ['distribute', 'on']);
-  assert.equal(res.code, 0, res.stderr);
-  assert.equal(await readFile(configPath, 'utf8'), before);
+  for (const [mode, arg] of [[true, 'on'], ['load', 'load']]) {
+    const configPath = await writeConfig(mode);
+    const before = await readFile(configPath, 'utf8');
+    const res = await runCli(configPath, ['distribute', arg]);
+    assert.equal(res.code, 0, res.stderr);
+    assert.equal(await readFile(configPath, 'utf8'), before);
+  }
 });
 
 test('an unknown argument is refused without touching the config', async () => {

@@ -15,6 +15,8 @@ rc team add alice --accounts '<account-id>' --max-concurrent 4
 
 An explicit `'*'` grant includes all current and future accounts. Select stable IDs when a member should use only specific accounts.
 
+To share a pool dynamically, grant each developer all account IDs in that pool rather than a single account. Keep the accounts at equal priority. New configurations use load-based placement; existing installations can enable it with `rc distribute load`. See [sharing accounts](../05-operations/README.md#spread-work-across-accounts) for failover and placement limits.
+
 ## Connect Claude Code
 
 In a Bash terminal on the developer's laptop, enter the member key:

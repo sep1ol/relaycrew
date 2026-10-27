@@ -158,13 +158,13 @@ relaycrew route rm fable
 
 RelayCrew always tracks running Claude Code traffic by the `x-claude-code-session-id` header, narrowed to the **conversation** within it (see below) — the TUI header and `relaycrew status` show how many are **active** (a request in flight right now, or seen in the last ~2 min) and **known** (seen in the last hour; a conversation is forgotten after an hour idle, the maximum prompt-cache extension window). A long streaming request keeps its conversation active and non-expirable for its whole duration, so a multi-minute completion still counts as load. A client session that fans out to subagents is several conversations and counts as several, which is what its load on the fleet actually is. This is passive: it observes, it doesn't change routing.
 
-Default rotation is purely quota-driven, so many parallel conversations all pile onto the *current* account while equal-priority siblings sit idle — one account queues behind its upstream concurrency ceiling while others do nothing ([#109](https://github.com/KarpelesLab/teamclaude/issues/109)). Enable `distributeSessions` to fix that:
+With distribution off, rotation is quota-driven, so parallel conversations can pile onto the current account while equal-priority siblings sit idle ([#109](https://github.com/KarpelesLab/teamclaude/issues/109)). Newly generated configurations use [load distribution](#load-distribution). Existing configurations retain their setting, and an absent `distributeSessions` field still means off. To choose active-conversation balancing instead, set:
 
 ```json
 "distributeSessions": true
 ```
 
-When on, RelayCrew routes each **new** conversation to the least-loaded eligible account (fewest active conversations, then fewest in-flight) and **pins** it there for the model family's weekly quota bucket, so it keeps hitting the same account for that family and preserves its prompt cache — while other conversations spread across accounts instead of funnelling onto one. Account **priority still wins** (a higher-priority account is never skipped to balance load), and a conversation whose account becomes exhausted re-routes automatically. Off by default; single-session use is unaffected either way.
+When set to `true`, RelayCrew routes each new conversation to the eligible account with the fewest active conversations, then fewest requests in flight. It pins the conversation there for the model family's weekly quota bucket to preserve its prompt cache. Account priority still wins, and an exhausted account causes the conversation to reroute. Team members can use only accounts permitted by their grants.
 
 **What is pinned is a conversation, and one client session may hold many.** Claude Code sends the same session id for its own turns and for every subagent it launches, so a fan-out arrives as N concurrent requests wearing one tag; pinning on that tag alone held all N on one account, queueing behind its concurrency ceiling while equal-priority siblings sat idle — [#109](https://github.com/KarpelesLab/teamclaude/issues/109) again, re-entered through the tag rather than through rotation. Nothing was gained for it, because a subagent given a context of its own shares no prompt cache with its siblings or with its parent. So a request is filed under its session id narrowed by a digest of the conversation's opening — the identity of the cached prefix — and the agents of one session are placed like any other conversations. Both edges of that key are safe by construction: a conversation cannot be separated from its own cache, because a first message that changed is a cached prefix that changed with it; and two conversations that open identically simply share an account, each keeping its own cache.
 
@@ -222,6 +222,8 @@ The `sess` in both lines is the display's short label and counts **conversations
 With `expiryRouting.preempt` on, a governing-window **rollover** also ends the drain for the conversation whose account rolled, and it rejoins normal rotation there and then. The drain trades expiring quota for a warm prompt cache, and that trade is priced on the window the account had when the drain started; once that window has gained a full week the account is the one the fleet should be spending last. Nothing else bounds it — a conversation making requests never idles out — so without this a long-lived one rides a rolled-over account for as long as it keeps talking.
 
 ### Load distribution
+
+Newly generated configurations persist this mode. To enable it on an existing installation, run `relaycrew distribute load`. Run `relaycrew distribute` to verify the mode. Upgrading the code or repeating `team init` does not change an existing configuration's mode.
 
 ```json
 "distributeSessions": "load"

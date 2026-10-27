@@ -30,11 +30,30 @@ A configuration change can be saved but fail to reload. Read that result careful
 
 ## Spread work across accounts
 
-Grant members the accounts that belong in their shared pool and keep those accounts at the same priority. Enable conversation distribution with `rc distribute on`. New conversations go to eligible accounts with fewer active conversations, and a conversation stays on its account for cache reuse until it needs to move.
+New configurations enable load-based conversation distribution. Existing configurations keep their setting, including quota-driven rotation when the field is absent. To enable load-based distribution on an existing native VPS installation, run:
 
-Use `rc distribute load` instead to place new conversations according to requests served over the last ten minutes. The unit is a conversation rather than a developer. Existing conversations stay where they are, so changes in an established workload drain gradually.
+```bash
+rc distribute load
+rc distribute
+```
 
-The dashboard threshold controls quota-driven rotation; it does not enable distribution. The default distribution mode is off. The existing adaptive mode favors spending down windows with less remaining credit and is not an even capacity-weighted assignment of developers. Review [session-aware routing](../routing.md#session-aware-routing), [load distribution](../routing.md#load-distribution), and [adaptive distribution](../routing.md#adaptive-distribution) before choosing a mode.
+Expect `Session distribution: load`. These commands use the service-user helper from the [VPS tutorial](../teams.md). For Docker Compose, run `sudo docker compose run --rm gateway distribute load` from `/opt/relaycrew`. If the command reports a reload failure, reload from Settings or restart the gateway.
+
+Grant each member every account in their shared pool. Use the dashboard's Team view or explicit IDs from `rc team accounts`:
+
+```bash
+rc team add alice --accounts '<account-a-id>,<account-b-id>' --max-concurrent 4
+```
+
+For an existing member, edit their grants in Team. A grant to only one account prevents failover to another account. An explicit `'*'` includes all current and future accounts.
+
+Keep pool accounts at equal priority. Lower numbers are preferred, so accounts in a later priority tier act as fallbacks. Use Accounts in the dashboard or `rc priority '<account-name>' 0` for each subscription in the pool. Leave metered API keys at their default priority 100 if they should remain paid fallbacks.
+
+New conversations go to eligible accounts with the fewest forwarded requests over the last ten minutes. On an idle pool, ties use active conversations and requests in flight. A conversation keeps its account for cache reuse, so existing traffic does not immediately rebalance. If its account becomes ineligible, RelayCrew selects another permitted account. With the default quota threshold, an account at 98% of a relevant quota window leaves rotation when that utilization is known to the gateway.
+
+The unit is a conversation rather than a developer. Twenty independent conversations can spread across four accounts, but twenty developers need not produce five conversations per account. Request count is not token cost or developer productivity. Subscription prices do not set placement weights.
+
+The dashboard threshold controls quota-driven rotation; it does not change the distribution mode. `rc distribute on` selects active-conversation balancing, and `rc distribute off` returns new conversations to quota-driven rotation while existing pins drain. Adaptive mode favors spending down windows with less remaining credit. Review [session-aware routing](../routing.md#session-aware-routing), [load distribution](../routing.md#load-distribution), and [adaptive distribution](../routing.md#adaptive-distribution) for details.
 
 ## Back up and upgrade
 

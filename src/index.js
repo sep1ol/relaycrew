@@ -2412,11 +2412,13 @@ async function distributeCommand() {
 
   if (arg === undefined) {
     console.log(`Session distribution: ${current}`);
-    console.log('Set with: relaycrew distribute <on|off|adaptive>');
-    console.log('On: each session stays on its account for cache reuse, and new sessions spread');
-    console.log('across equal-priority accounts by load. Off: quota-driven rotation only.');
-    console.log('Adaptive: spread by remaining weekly credit and load rather than evenly, so the');
-    console.log('most-spent account is finished off first without being run into its threshold.');
+    console.log('Set with: relaycrew distribute <on|off|adaptive|load>');
+    console.log('Off: quota-driven rotation only. On (even): place new conversations by fewest');
+    console.log('active conversations, then fewest requests in flight, across equal-priority accounts.');
+    console.log('Adaptive: spread by remaining weekly credit and load, finishing the most-spent');
+    console.log('account first without running it into its threshold.');
+    console.log('Load: place new conversations on the account with the fewest requests in the last');
+    console.log('ten minutes. Distributed conversations stay pinned for cache reuse.');
     return;
   }
 
@@ -2914,7 +2916,7 @@ Commands:
                       per bucket with 'unified7d=90', and '=default' drops one
   distribute [on|off|adaptive|load]
                       Spread new sessions across equal-priority accounts, each
-                      pinned to its own for cache reuse (off by default);
+                      pinned to its own for cache reuse (load for new configs);
                       'adaptive' spreads by remaining weekly credit and load;
                       'load' places each new session on the account that served
                       the fewest requests in the last ten minutes

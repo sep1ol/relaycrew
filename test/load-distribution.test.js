@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AccountManager, distributionMode } from '../src/account-manager.js';
+import { createDefaultConfig } from '../src/config.js';
 import { SessionTracker, LOAD_WINDOW_MS, MAX_ROUTED } from '../src/session-tracker.js';
 
 function oauth(name, extra = {}) {
@@ -86,15 +87,15 @@ test('load mode keeps the pin: a placed session routes back to its account while
   assert.equal(am.getActiveAccount(null, null, null, 's-3').index, other.index, 'a new one goes to the quieter account');
 });
 
-test('load mode: an idle fleet falls through to the even tie-break (every account at zero)', () => {
-  const am = mgr(['a', 'b', 'c']);
+test('the default mode spreads 20 new conversations across four equal-priority accounts', () => {
+  const am = mgr(['a', 'b', 'c', 'd'], { distributeSessions: createDefaultConfig().distributeSessions });
   const counts = {};
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 20; i++) {
     const acc = am.getActiveAccount(null, null, null, `s-${i}`);
     am.recordSession(`s-${i}`, acc.index);
     counts[acc.name] = (counts[acc.name] || 0) + 1;
   }
-  assert.deepEqual(Object.values(counts).sort(), [2, 2, 2], 'spreads evenly when nothing distinguishes the accounts');
+  assert.deepEqual(Object.values(counts).sort(), [5, 5, 5, 5], 'spreads evenly when nothing distinguishes the accounts');
 });
 
 test('even mode is unchanged by the routed counter', () => {

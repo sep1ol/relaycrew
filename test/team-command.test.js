@@ -75,6 +75,30 @@ function issuedKey(result) {
   return match[1];
 }
 
+test('team init creates a new config with load distribution', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'relaycrew-team-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'config.json');
+  const result = await runCli(path, ['init']);
+  assert.equal(result.code, 0, result.stderr);
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(saved.distributeSessions, 'load');
+  assert.equal(saved.proxy.teamMode, true);
+});
+
+test('team init preserves existing distribution settings, including an omitted flag', async t => {
+  for (const mode of [undefined, false, true, 'adaptive', 'load']) {
+    const config = baseConfig();
+    if (mode !== undefined) config.distributeSessions = mode;
+    const file = await fixture(t, config);
+    const result = await runCli(file.path, ['init']);
+    assert.equal(result.code, 0, result.stderr);
+    const saved = await file.read();
+    assert.equal(saved.distributeSessions, mode);
+    assert.equal(Object.hasOwn(saved, 'distributeSessions'), mode !== undefined);
+  }
+});
+
 test('team init preserves accounts and a strong admin key, disables trust and updates', async t => {
   const original = baseConfig();
   original.proxy.trustLoopback = true;

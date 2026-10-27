@@ -34,13 +34,14 @@ Follow the numbered guides from setup to daily use:
 
 - Individual member keys with creation, rotation, revocation, and usage attribution.
 - Account permissions based on stable IDs, including overlapping account pools.
+- Load-based placement of new conversations across eligible accounts, with account affinity for cache reuse and quota-driven failover.
 - Administrator-only fleet status, configuration controls, and management MCP.
 - Private member usage at `GET /relaycrew/me`.
 - Per-member concurrent request limits covering retries and streaming.
 - Credential revalidation inside existing MITM tunnels.
 - Persistent provider credentials and usage through the existing protected configuration and state files.
 
-The default individual mode remains compatible with upstream. Team mode requires explicit activation. Codex support inherits upstream's experimental status. Use provider credentials and account arrangements authorized for your organization. A software fork does not change provider subscription terms or increase an account's quota.
+Existing individual configurations retain their routing settings. Team mode requires explicit activation. Codex support inherits upstream's experimental status. Use provider credentials and account arrangements authorized for your organization. A software fork does not change provider subscription terms or increase an account's quota.
 
 ## Install from source
 
@@ -58,6 +59,8 @@ node src/index.js server --headless
 ```
 
 Run `login` once for each provider account. Choose `--claude` for a Claude subscription, `--codex` for a ChatGPT/Codex subscription, `--claude-api` for an Anthropic API key, or `--openai-api` for an OpenAI API key. OpenAI API keys serve Responses requests. See [accounts](docs/accounts.md). Member keys are printed only when created or rotated. Store and distribute them through a private channel.
+
+New configurations enable load-based conversation distribution. For a shared pool, grant each member the pool's account IDs and keep those accounts at equal priority. Existing installations can opt in with `node src/index.js distribute load`. See [sharing accounts](docs/05-operations/README.md#spread-work-across-accounts) for setup and limits.
 
 The administrator key stays in the configuration file and is never printed by `team init`. Keep the file private. Do not give developers the server configuration or provider OAuth tokens.
 

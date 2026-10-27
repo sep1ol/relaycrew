@@ -104,7 +104,7 @@ export function createDefaultConfig() {
     upstream: 'https://api.anthropic.com',
     switchThreshold: 0.98,
     holdSeconds: 0,
-    distributeSessions: false,
+    distributeSessions: 'load',
     sessionTitles: { enabled: false, width: 18 },
     quotaBarPercent: false,
     accountSort: 'arranged',

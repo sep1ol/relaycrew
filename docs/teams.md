@@ -47,6 +47,8 @@ rc team init
 
 `team init` enables team mode and creates the administrator key in the private configuration. It does not print that key. Before the gateway starts, an absent-server reload warning is expected; the configuration was still saved.
 
+A newly created configuration uses load-based conversation distribution. If this VPS already has a configuration, enable it explicitly with `rc distribute load`. Existing settings remain unchanged on upgrade or repeated `team init`. See [sharing accounts](05-operations/README.md#spread-work-across-accounts) for equal-priority pools and member grants.
+
 ### Sign provider accounts in
 
 For a Claude subscription account, use the copy-and-paste login flow:
@@ -134,6 +136,8 @@ sudo docker compose run --rm gateway team init
 ```
 
 This example uses the image's default UID and GID, both 1000. The entrypoint runs the gateway as that unprivileged identity. If an existing deployment uses different IDs, use its IDs for directory ownership and subsequent `exec --user` commands. `data/` holds the configuration, runtime state, and certificate material. It is excluded from Git and the Docker build context.
+
+New configurations use load-based conversation distribution. To enable it with an existing configuration, run `sudo docker compose run --rm gateway distribute load`. See [sharing accounts](05-operations/README.md#spread-work-across-accounts) for pool permissions, account priorities, and reload verification.
 
 ### Sign provider accounts in
 
