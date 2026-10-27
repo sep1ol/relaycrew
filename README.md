@@ -75,7 +75,7 @@ Changes notify the local server. If a reload fails, the command reports that a r
 
 The [visual tour](docs/04-dashboard/README.md) includes screenshots of both themes, account controls, team access, and usage distributions. Run `npm run preview` to explore an isolated demonstration with synthetic data.
 
-Open `/relaycrew/dashboard` on the gateway or run `node src/index.js dashboard`. The workspace includes accounts, team management, sessions, settings and historical usage distributions. Team controls use the administrator key; member keys cannot view fleet data. See the [dashboard guide](docs/dashboard.md) for operation, API contracts and historical coverage limits.
+Open `/dashboard` on the gateway or run `node src/index.js dashboard`. The workspace includes accounts, team management, sessions, settings and historical usage distributions. Team controls use the administrator key; member keys cannot view fleet data. See the [dashboard guide](docs/dashboard.md) for operation, API contracts and historical coverage limits.
 
 ## Verify changes
 

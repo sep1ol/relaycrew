@@ -1,6 +1,8 @@
 # RelayCrew names and existing installations
 
-RelayCrew is the canonical product, package (`@sep1ol/relaycrew`), command (`relaycrew`), environment prefix (`RELAYCREW_`), and control URL prefix (`/relaycrew`). The dashboard is `/relaycrew/dashboard`.
+RelayCrew is the canonical product, package (`@sep1ol/relaycrew`), command (`relaycrew`), environment prefix (`RELAYCREW_`), and control URL prefix (`/relaycrew`). The dashboard UI is `/dashboard`; its data and management APIs remain under `/relaycrew`.
+
+Dashboard GET requests to `/relaycrew/dashboard`, `/teamclaude/dashboard`, and `/teamrouter/dashboard` redirect permanently to `/dashboard`, including URLs with a trailing slash. `/dashboard/` also redirects to `/dashboard`. Query strings and browser fragments are preserved.
 
 Existing `teamclaude` and `teamrouter` binary names and control URL prefixes remain accepted. All spellings pass through the same authentication, authorization, and cross-origin controls. Unrecognized control routes stay local instead of being forwarded to a provider.
 

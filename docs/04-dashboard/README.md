@@ -1,6 +1,6 @@
 # 04 · Dashboard tour
 
-Open `/relaycrew/dashboard` on your gateway and sign in with the administrator key. The following screenshots show the local preview with synthetic accounts, members, and history. English is the default interface language. Use the language selector to switch to Portuguese (Brazil) or Spanish. The choice stays in this browser for this gateway. The screenshots below use English.
+Open `/dashboard` on your gateway and sign in with the administrator key. The following screenshots show the local preview with synthetic accounts, members, and history. English is the default interface language. Use the language selector to switch to Portuguese (Brazil) or Spanish. The choice stays in this browser for this gateway. The screenshots below use English.
 
 ## Overview
 

@@ -247,7 +247,7 @@ Every `/relaycrew/…` route the server exposes — `status`, `quota`, `reload`,
 
 ## Status dashboard (browser)
 
-`GET /relaycrew/dashboard` serves a self-contained HTML page rendering the same data as `relaycrew status`: per-account quota bars (session and weekly, plus one bar per model-scoped weekly bucket upstream reports), rotation state, and active sessions — refreshed every few seconds.
+`GET /dashboard` serves a self-contained HTML page rendering the same data as `relaycrew status`: per-account quota bars (session and weekly, plus one bar per model-scoped weekly bucket upstream reports), rotation state, and active sessions — refreshed every few seconds.
 
 `relaycrew dashboard` opens this page in the system browser against a running server (it starts none; use `relaycrew server` or `relaycrew service install` for that). The page's **Reload config** and **Probe quotas** buttons mirror the corresponding TUI actions without spending message quota. The **Theme** button cycles system → light → dark; the choice is kept in the browser's localStorage, and "system" follows the browser's `prefers-color-scheme`.
 
@@ -269,10 +269,10 @@ The page knows which controls to hide from `caller` in `/relaycrew/status`: `{ "
 
 
 ```
-http://localhost:3456/relaycrew/dashboard
+http://localhost:3456/dashboard
 ```
 
-The page is a static asset and loads without a key; the data does not — its script fetches `/relaycrew/status` first, and asks for the proxy key only if the server refuses the request without one. Loopback browsers are key-exempt as everywhere else, so on the proxy's own machine there is no prompt. A key that is entered is kept in the browser's localStorage, and a 401 after a key rotation brings the prompt back. On deployments that put the proxy behind TLS this works remotely too: `https://your-proxy.example.com/relaycrew/dashboard`.
+The page is a static asset and loads without a key; the data does not — its script fetches `/relaycrew/status` first, and asks for the proxy key only if the server refuses the request without one. Loopback browsers are key-exempt as everywhere else, so on the proxy's own machine there is no prompt. A key that is entered is kept in the browser's localStorage, and a 401 after a key rotation brings the prompt back. On deployments that put the proxy behind TLS this works remotely too: `https://your-proxy.example.com/dashboard`.
 
 ## MCP endpoint
 

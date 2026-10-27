@@ -54,7 +54,7 @@ const child = spawn(process.execPath, [fileURLToPath(new URL('../src/index.js', 
   env: { ...process.env, RELAYCREW_CONFIG: configPath, RELAYCREW_HOST: '127.0.0.1', RELAYCREW_DISABLE_AUTOUPDATE: '1' },
   stdio: 'inherit',
 });
-console.log(`Local demonstration with synthetic accounts, members and history. No provider credentials are used.\nDashboard: http://localhost:${port}/relaycrew/dashboard\nProtected demo configuration: ${configPath}`);
+console.log(`Local demonstration with synthetic accounts, members and history. No provider credentials are used.\nDashboard: http://localhost:${port}/dashboard\nProtected demo configuration: ${configPath}`);
 let stopping = false;
 function stop() { if (!stopping) { stopping = true; child.kill('SIGTERM'); } }
 process.on('SIGINT', stop);

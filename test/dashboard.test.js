@@ -804,7 +804,7 @@ test('dashboard page is self-contained: no external resources', () => {
   assert.match(html, /fetch\('\/relaycrew\/status'/);
 });
 
-test('GET /relaycrew/dashboard serves HTML without a key; other methods are a local 404', async () => {
+test('GET /dashboard serves public HTML, redirects legacy URLs and keeps data and unsupported methods protected', async () => {
   let upstreamHits = 0;
   const upstream = http.createServer((req, res) => {
     upstreamHits++;
@@ -815,12 +815,15 @@ test('GET /relaycrew/dashboard serves HTML without a key; other methods are a lo
   const am = new AccountManager([{ name: 'a', type: 'api_key', apiKey: 'sk-x' }], 0.98);
   const proxy = createProxyServer(am, { proxy: { apiKey: 'secret' }, upstream: `http://127.0.0.1:${upstreamPort}` });
   const port = await listen(proxy);
+  const remoteHeaders = { host: 'gateway.example.com', 'x-forwarded-for': '203.0.113.10' };
   try {
-    const page = await fetch(`http://127.0.0.1:${port}/relaycrew/dashboard`);
+    const page = await fetch(`http://127.0.0.1:${port}/dashboard`, { headers: remoteHeaders });
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-type'), /text\/html/);
+    assert.equal(page.headers.get('cache-control'), 'no-store');
     const html = await page.text();
     assert.match(html, /RelayCrew/);
+    assert.doesNotMatch(html, /sk-x/);
 
     // The page keeps the proxy key in localStorage, so it ships with a policy
     // that lets nothing load from anywhere and admits only its own script —
@@ -843,13 +846,41 @@ test('GET /relaycrew/dashboard serves HTML without a key; other methods are a lo
     }
     assert.equal(page.headers.get('x-content-type-options'), 'nosniff');
 
-    // The asset route is GET + exact path only — a POST to the same path must
-    // NOT hit the dashboard handler. It used to flow on to the forwarder and
-    // reach the upstream under a fleet credential; an unclaimed path under the
-    // proxy's own prefix is now answered here (#420).
-    const post = await fetch(`http://127.0.0.1:${port}/relaycrew/dashboard`, { method: 'POST' });
-    assert.equal(post.status, 404);
-    assert.match((await post.json()).error, /unknown relaycrew control route/);
+    const queriedPage = await fetch(`http://127.0.0.1:${port}/dashboard?view=team&filter=a%2Fb`, { headers: remoteHeaders });
+    assert.equal(queriedPage.status, 200);
+    assert.equal(await queriedPage.text(), html);
+    assert.equal(queriedPage.headers.get('content-security-policy'), csp);
+
+    for (const path of ['/dashboard/', '/relaycrew/dashboard', '/relaycrew/dashboard/', '/teamclaude/dashboard', '/teamclaude/dashboard/', '/teamrouter/dashboard', '/teamrouter/dashboard/']) {
+      for (const query of ['', '?view=team&filter=a%2Fb&next=https%3A%2F%2Fexample.com']) {
+        const redirect = await fetch(`http://127.0.0.1:${port}${path}${query}`, { headers: remoteHeaders, redirect: 'manual' });
+        assert.equal(redirect.status, 308, path + query);
+        assert.equal(redirect.headers.get('location'), '/dashboard' + query);
+        assert.equal(await redirect.text(), '');
+      }
+    }
+
+    const refused = await fetch(`http://127.0.0.1:${port}/relaycrew/status`, { headers: remoteHeaders });
+    assert.equal(refused.status, 401);
+    const status = await fetch(`http://127.0.0.1:${port}/relaycrew/status`, { headers: { ...remoteHeaders, 'x-api-key': 'secret' } });
+    assert.equal(status.status, 200);
+    assert.equal((await status.json()).accounts[0].name, 'a');
+
+    for (const headers of [{}, { ...remoteHeaders, 'x-api-key': 'secret' }]) {
+      for (const path of ['/dashboard', '/dashboard/', '/dashboard/unknown?view=team']) {
+        for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD', 'PROPFIND']) {
+          const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers });
+          assert.equal(response.status, 404, method + ' ' + path);
+          if (method !== 'HEAD') assert.match((await response.json()).error, /unknown relaycrew control route/);
+        }
+      }
+      for (const path of ['/dashboard/unknown', '/relaycrew/dashboard', '/relaycrew/dashboard/', '/teamclaude/dashboard', '/teamrouter/dashboard']) {
+        const method = path === '/dashboard/unknown' ? 'GET' : 'POST';
+        const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers });
+        assert.equal(response.status, 404, method + ' ' + path);
+        assert.equal(response.headers.get('location'), null);
+      }
+    }
     assert.equal(upstreamHits, 0);
   } finally {
     proxy.close();

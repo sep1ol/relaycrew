@@ -12,7 +12,7 @@ cd relaycrew
 npm run preview
 ```
 
-Open `http://localhost:43190/relaycrew/dashboard`. The terminal prints a protected temporary configuration path. Use the administrator key from that local configuration to sign in.
+Open `http://localhost:43190/dashboard`. The terminal prints a protected temporary configuration path. Use the administrator key from that local configuration to sign in.
 
 The preview supplies synthetic provider accounts, members, and history. It uses a local fake upstream and does not import your provider credentials. Keep the terminal running while exploring. Ctrl+C stops the preview and removes its temporary configuration.
 
