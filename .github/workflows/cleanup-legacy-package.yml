@@ -1,0 +1,35 @@
+name: Remove obsolete container package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    if: github.repository == 'sep1ol/relaycrew' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Remove only the obsolete teamclaude package
+        shell: bash
+        run: |
+          set -euo pipefail
+          canonical='users/sep1ol/packages/container/relaycrew'
+          obsolete='users/sep1ol/packages/container/teamclaude'
+          canonical_id=$(gh api "$canonical" --jq '.id')
+          test -n "$canonical_id"
+          metadata=$(gh api "$obsolete")
+          jq -e '.name == "teamclaude" and .repository.full_name == "sep1ol/relaycrew"' <<< "$metadata"
+          printf '%s\n' "$metadata" | jq '{id, name, repository: .repository.full_name}'
+          gh api --method DELETE "$obsolete"
+          test "$(gh api "$canonical" --jq '.id')" = "$canonical_id"
+          if gh api "$obsolete" > /dev/null 2> legacy-error.txt; then
+            echo 'The obsolete package still exists.' >&2
+            exit 1
+          fi
+          grep -q 'HTTP 404' legacy-error.txt
+          echo 'Removed teamclaude; relaycrew remains available.' >> "$GITHUB_STEP_SUMMARY"
