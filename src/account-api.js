@@ -29,9 +29,13 @@ function requiredText(value, field) {
 
 /** Authorization and CSRF gates in server.js run first.
  * @param {any} req @param {any} res
- * @param {{config: Record<string, any>, hooks?: {reload?: () => Promise<any>}, logins: import('./member-logins.js').MemberLogins,
+ * @param {{config: Record<string, any>, hooks?: {reload?: () => Promise<any>}, logins: import('./member-logins.js').MemberLogins|null,
  * readBody: (req: any) => Promise<string|Buffer>}} options @returns {Promise<boolean>} */
 export async function handleAccountRequest(req, res, { config, hooks = {}, logins, readBody }) {
+  const loginService = () => {
+    if (!logins) throw new TypeError('Provider sign-in is unavailable.');
+    return logins;
+  };
   const classified = classificationPath(req.url);
   const path = canonicalControlUrl(classified) ?? classified;
   const match = /^\/relaycrew\/accounts\/(login(?:\/(?:complete|cancel))?|update|remove)$/.exec(path);
@@ -62,7 +66,7 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
       if (body.provider !== 'claude' && body.provider !== 'codex') throw new AccountActionError('Provider must be claude or codex.');
       const sharing = identity.kind === 'member' ? validateSharing(body.sharing) : 'private';
       let login;
-      try { login = await logins.start(identity, { provider: body.provider, sharing }); }
+      try { login = await loginService().start(identity, { provider: body.provider, sharing }); }
       catch (error) {
         if (error instanceof AccountActionError) throw error;
         throw new AccountActionError('Unable to start the provider sign-in. Try again.', 502);
@@ -72,7 +76,7 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
     }
     const id = requiredText(body.id, 'id');
     if (action === 'login/cancel') {
-      logins.cancel(identity, id);
+      loginService().cancel(identity, id);
       teamJson(res, 200, { ok: true });
       return true;
     }
@@ -80,13 +84,13 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
     let change;
     if (action === 'login/complete') {
       const code = requiredText(body.code, 'code');
-      const pending = logins.require(identity, id);
+      const pending = loginService().require(identity, id);
       let accepted;
-      try { accepted = logins.submit(identity, id, code); }
-      catch (error) { throw new AccountActionError(error.message); }
+      try { accepted = loginService().submit(identity, id, code); }
+      catch (error) { throw new AccountActionError(/** @type {Error} */ (error).message); }
       if (!accepted) throw new AccountActionError('This login has already completed.', 409);
       let creds;
-      try { creds = await logins.result(identity, id); }
+      try { creds = await loginService().result(identity, id); }
       catch (error) {
         if (error instanceof AccountActionError) throw error;
         throw new AccountActionError('The provider refused the code. Start a new login.', 502);
@@ -96,7 +100,7 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
       change = async () => {
         const outcome = account ? await persistAccount(account, opts) : await upsertCodexAccount(creds, opts);
         const disk = await loadConfigPersistingIds();
-        return { action: outcome.action, account: accountView(disk.accounts.find(row => row.id === outcome.id)) };
+        return { action: outcome.action, account: accountView(disk.accounts.find((/** @type {{id: string}} */ row) => row.id === outcome.id)) };
       };
     } else {
       if (action === 'update') {
@@ -105,11 +109,12 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
         if (body.disabled === undefined && body.sharing === undefined) throw new AccountActionError('Specify disabled or sharing.');
       }
       change = async () => {
+        /** @type {ReturnType<typeof applyAccountAction>|undefined} */
         let result;
-        await atomicConfigUpdate(disk => {
+        await atomicConfigUpdate((/** @type {Parameters<typeof applyAccountAction>[0]} */ disk) => {
           result = applyAccountAction(disk, identity, { ...body, id, action });
         });
-        return result;
+        return /** @type {ReturnType<typeof applyAccountAction>} */ (result);
       };
     }
     const result = await serializeMutation(async () => {
@@ -127,7 +132,7 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
     });
     teamJson(res, 200, result);
   } catch (error) {
-    const status = error instanceof AccountActionError ? error.status : error.code === 'CONFIG_LOCK_BUSY' ? 503 : 500;
+    const status = error instanceof AccountActionError ? error.status : /** @type {{code?: string}} */ (error).code === 'CONFIG_LOCK_BUSY' ? 503 : 500;
     teamJson(res, status, { ok: false, error: error instanceof AccountActionError ? error.message : status === 503 ? 'Config is busy. Try again shortly.' : 'Unable to read or save account configuration.' });
   }
   return true;

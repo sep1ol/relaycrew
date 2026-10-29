@@ -458,7 +458,7 @@ export function callerView(client) {
  * @param {any} [sx]
  * @param {any} [clientUsage]
  * @param {any} [dimensionUsage]
- * @param {{ bindHost?: string|null, logins?: import('./member-logins.js').MemberLogins }} [opts]  `bindHost`: the address the caller
+ * @param {{ bindHost?: string|null, logins?: import('./member-logins.js').MemberLogins|null }} [opts]  `bindHost`: the address the caller
  *   binds, when it is not `config.proxy.host` (RELAYCREW_HOST overrides it). The
  *   DNS-rebinding Host check accepts that address as naming this machine; given
  *   only the config value, a server bound off-box through the env var refused a

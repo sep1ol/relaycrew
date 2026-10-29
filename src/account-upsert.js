@@ -20,17 +20,17 @@ async function recordSignInWithCallback(entry, log) {
   try {
     if (await sync.storeSignIn(entry)) log('Stored on callback.net for your other installs.');
   } catch (error) {
-    log(`Could not store the sign-in on callback.net (${sanitizeText(error?.message || error)}); its next renewal will.`);
+    log(`Could not store the sign-in on callback.net (${sanitizeText(/** @type {Error|null|undefined} */ (error)?.message || error)}); its next renewal will.`);
   }
 }
 
 /** @param {Record<string, any>} account @param {UpsertOptions} opts @returns {Promise<UpsertResult>} */
 export async function persistAccount(account, { owner = null, routing = null, storeRouting = false, name, log = () => {} }) {
-  /** @type {UpsertResult} */
+  /** @type {UpsertResult|undefined} */
   let outcome;
-  /** @type {Record<string, any>} */
+  /** @type {Parameters<typeof recordSignInWithCallback>[0]|undefined} */
   let signedIn;
-  await atomicConfigUpdate(config => {
+  await atomicConfigUpdate((/** @type {{accounts: Array<Parameters<typeof updateAccountEntry>[0]>}} */ config) => {
     account.name ||= account.provider === 'codex'
       ? `codex-${config.accounts.filter(row => row.provider === 'codex').length + 1}`
       : `account-${config.accounts.filter(row => row.name.startsWith('account-')).length + 1}`;
@@ -42,13 +42,14 @@ export async function persistAccount(account, { owner = null, routing = null, st
       assertAccountOwner(previous, owner);
       // Keep ownership, sharing and disabled state from the locked disk row.
       delete account.owner;
-      signedIn = config.accounts[index] = updateAccountEntry(previous, account);
-      if (storeRouting && !routing) delete signedIn.routing;
-      outcome = { action: 'updated', id: signedIn.id, name: signedIn.name };
+      const updated = config.accounts[index] = updateAccountEntry(previous, account);
+      signedIn = updated;
+      if (storeRouting && !routing) delete updated.routing;
+      outcome = { action: 'updated', id: updated.id, name: updated.name };
       if (!storeRouting && !routing) {
         let own = null;
         try { own = parseRoutingUrl(previous.routing); }
-        catch (error) { log(`Note: ignoring routing for "${previous.name}" — ${sanitizeText(error.message)}`); }
+        catch (error) { log(`Note: ignoring routing for "${previous.name}" — ${sanitizeText(/** @type {Error} */ (error).message)}`); }
         if (own) {
           log(`Note: "${previous.name}" has its own routing (${describeRouting(own)}), and this sign-in did not use it:`);
           log('      the account was only identified after signing in. Its requests are still routed.');
@@ -71,10 +72,13 @@ export async function persistAccount(account, { owner = null, routing = null, st
       outcome = { action: 'added', id: account.id, name: account.name };
     }
   });
-  log(`${outcome.action === 'added' ? 'Added' : 'Updated'} account "${outcome.name}"`);
+  // The locked updater assigns both values on every successful path.
+  const result = /** @type {UpsertResult} */ (outcome);
+  const entry = /** @type {Parameters<typeof recordSignInWithCallback>[0]} */ (signedIn);
+  log(`${result.action === 'added' ? 'Added' : 'Updated'} account "${result.name}"`);
   log(`Saved to ${getConfigPath()}`);
-  if (!signedIn.owner) await recordSignInWithCallback(signedIn, log);
-  return outcome;
+  if (!entry.owner) await recordSignInWithCallback(entry, log);
+  return result;
 }
 
 /** @param {Record<string, any>} creds @param {UpsertOptions} [opts] @returns {Promise<UpsertResult>} */
@@ -98,7 +102,7 @@ export async function identifyOAuthAccount(creds, opts = {}) {
     renew: c => refreshOutsideProxy({
       name: name || 'imported account', type: 'oauth', owner,
       accessToken: c.accessToken, refreshToken: c.refreshToken, expiresAt: c.expiresAt,
-    }, o => refreshAccessToken(c.refreshToken, undefined, routing, o), { force: true, log })
+    }, o => /** @type {Promise<import('./credential-sync.js').Tokens>} */ (refreshAccessToken(c.refreshToken, undefined, routing, o)), { force: true, log })
       .then(tokens => tokens ?? Promise.reject(new Error('token not renewed'))),
   });
   creds = identified.creds;

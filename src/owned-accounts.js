@@ -40,12 +40,12 @@ export function pinAccountPolicy(row, current) {
   return pinned;
 }
 
-/** @param {Record<string, any>} config @param {Actor} actor */
+/** @param {{accounts?: Array<Parameters<typeof accountView>[0]>}} config @param {Actor} actor */
 export function accountViews(config, actor) {
   return (config.accounts ?? []).filter(row => actor.kind === 'admin' || row.owner?.name === actor.name).map(accountView);
 }
 
-/** @param {Record<string, any>} config @param {Actor} actor @param {string} id @returns {Record<string, any>} */
+/** @param {{accounts?: Array<Parameters<typeof accountView>[0]>}} config @param {Actor} actor @param {string} id @returns {Record<string, any>} */
 export function manageableRow(config, actor, id) {
   const row = (config.accounts ?? []).find(row => row.id === id);
   if (actor.kind === 'member' && (!row?.owner || row.owner.name !== actor.name)) throw new AccountActionError('That account is not yours.', 403);
@@ -53,13 +53,14 @@ export function manageableRow(config, actor, id) {
   return row;
 }
 
-/** @param {Record<string, any>} config @param {Actor} actor @param {AccountAction} action
+/** @param {{accounts?: Array<Parameters<typeof accountView>[0]>}} config @param {Actor} actor @param {AccountAction} action
  * @returns {{account: AccountView}|{removed: string}} */
 export function applyAccountAction(config, actor, action) {
   const row = manageableRow(config, actor, action.id);
   if (action.action === 'remove') {
     if (!row.owner) throw new AccountActionError('Remove operator accounts with relaycrew remove.');
-    config.accounts.splice(config.accounts.indexOf(row), 1);
+    const accounts = config.accounts ?? [];
+    accounts.splice(accounts.indexOf(row), 1);
     return { removed: row.id };
   }
   if (action.sharing !== undefined && !row.owner) throw new AccountActionError('Operator accounts do not have a sharing setting.');

@@ -4,8 +4,10 @@ import { GatewayClient, RetryablePaste, resolveGateway } from './gateway-client.
 import { isRemoteSession, openBrowser } from './login-flow.js';
 import { safeLine } from './safe-text.js';
 
-/** @typedef {{action: 'login'|'accounts'|'disable'|'enable'|'share'|'remove', id?: string,
- * provider?: import('./member-logins.js').LoginProvider, sharing?: import('./owned-accounts.js').Sharing}} MemberCommand */
+/** @typedef {{action: 'login', provider: import('./member-logins.js').LoginProvider, sharing: import('./owned-accounts.js').Sharing}
+ * |{action: 'accounts'}
+ * |{action: 'share', id: string, sharing: import('./owned-accounts.js').Sharing}
+ * |{action: 'disable'|'enable'|'remove', id: string}} MemberCommand */
 
 const USAGE = [
   'Usage: relaycrew member accounts',
@@ -44,11 +46,11 @@ function parseCommand(args) {
   } else if (action === 'accounts') {
     if (positional.length !== 1 || providers.length || sharing.length) throw new Error(USAGE);
   } else if (!['disable', 'enable', 'remove'].includes(action) || positional.length !== 2 || providers.length || sharing.length) throw new Error(USAGE);
-  return {
+  return /** @type {MemberCommand} */ ({
     action: /** @type {MemberCommand['action']} */ (action), id,
     provider: /** @type {import('./member-logins.js').LoginProvider} */ (providers[0]?.slice(2)),
     sharing: /** @type {import('./owned-accounts.js').Sharing} */ (sharing[0]?.slice(2)),
-  };
+  });
 }
 
 /** @param {NodeJS.ReadStream} input @param {NodeJS.WriteStream} output */
@@ -76,9 +78,9 @@ export async function memberCommand(args, { client = null, input = process.stdin
   const print = (/** @type {string} */ line) => output.write(`${line}\n`);
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) { print(USAGE); return; }
   const command = parseCommand(args);
-  /** @type {ReturnType<typeof terminalLines>|null} */
-  let terminal = null;
-  const ask = (/** @type {string} */ prompt) => (terminal ??= terminalLines(input, output)).ask(prompt);
+  /** @type {{terminal?: ReturnType<typeof terminalLines>}} */
+  const state = {};
+  const ask = (/** @type {string} */ prompt) => (state.terminal ??= terminalLines(input, output)).ask(prompt);
   try {
     if (!client) {
       const resolved = resolveGateway(args, env);
@@ -127,6 +129,6 @@ export async function memberCommand(args, { client = null, input = process.stdin
     print(command.action === 'remove' ? `Removed ${result.removed}.` : `Updated "${safeLine(result.account.name, 200)}" (${result.account.sharing}, ${result.account.disabled ? 'disabled' : 'active'}).`);
     if (result.warning) print(safeLine(result.warning, 500));
   } finally {
-    terminal?.close();
+    state.terminal?.close();
   }
 }

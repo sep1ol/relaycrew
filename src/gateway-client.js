@@ -10,7 +10,7 @@ export class RetryablePaste extends GatewayError {}
 
 /** @param {string[]} args @param {NodeJS.ProcessEnv} [env] */
 export function resolveGateway(args, env = process.env) {
-  const flag = name => {
+  const flag = (/** @type {string} */ name) => {
     const index = args.indexOf(name);
     if (index < 0) return undefined;
     const value = args[index + 1];
