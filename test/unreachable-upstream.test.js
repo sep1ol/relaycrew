@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { closedPort } from '../test-helpers/closed-port.js';
 import http from 'node:http';
 import { AccountManager } from '../src/account-manager.js';
 import { createProxyServer } from '../src/server.js';
@@ -150,7 +151,8 @@ test('a refused connection is not walked through the fleet by an unselectable ac
   // loopback bypass changes the error shape, and this test would then be
   // measuring that instead.
   const restore = withoutAmbientProxy();
-  const proxy = createProxyServer(am, { proxy: {}, upstream: 'http://127.0.0.1:1' });
+  const upstreamPort = await closedPort();
+  const proxy = createProxyServer(am, { proxy: {}, upstream: `http://127.0.0.1:${upstreamPort}` });
   const port = await listen(proxy);
   let got;
   try {
