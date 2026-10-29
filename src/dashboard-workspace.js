@@ -5,7 +5,7 @@
  * @typedef {{requests?: number, connections?: number, inputTokens?: number, outputTokens?: number}} UsageCounters
  * @typedef {UsageCounters & {windows?: Record<string, UsageCounters>}} UsageEntry
  * @typedef {{kind?: string, refused?: string[]}} WorkspaceCaller
- * @typedef {{name: string, provider?: string, disabled?: boolean, unavailable?: boolean}} WorkspaceAccount
+ * @typedef {{id?: string|null, name: string, provider?: string, disabled?: boolean, unavailable?: boolean}} WorkspaceAccount
  * @typedef {{id?: string, session: string, account: string}} SessionPin
  * @typedef {Object} WorkspaceStatus
  * @property {boolean} [dashboardPreview]
@@ -20,7 +20,8 @@
  * @property {{running?: boolean}} [probe]
  * @property {SessionPin[]} [sessionPins]
  *
- * @typedef {{id: string, name: string, provider: string, disabled?: boolean}} TeamAccount
+ * @typedef {{id: string, name: string, provider: string, disabled?: boolean, owner?: string|null, sharing?: string, disabledBy?: string}} TeamAccount
+ * @typedef {{id: string, provider: string, paste: 'code'|'callback-url'|'none', url: string, userCode?: string}} AccountLogin
  * @typedef {UsageCounters & {lastUsed?: string|number|null}} MemberUsage
  * @typedef {{name: string, accounts: '*'|string[], maxConcurrent: number, active?: number, disabled?: boolean, usage?: MemberUsage}} TeamMember
  * @typedef {{enabled: boolean, revision: string, accounts: TeamAccount[], members: TeamMember[]}} TeamPayload
@@ -48,11 +49,18 @@
  * @property {{name: string, action: MemberAction, revision: string|null}|null} action
  * @property {boolean} submitting
  * @property {number} lastGood
+ * @property {TeamAccount[]|null} accountRows
+ * @property {number} accountsAt
+ * @property {boolean} accountBusy
+ * @property {TeamAccount|null} removing
+ * @property {AccountLogin|null} login
+ * @property {boolean} loginBusy
+ * @property {number} loginEpoch
  *
  * @typedef {{getElementById: (id: string) => any, querySelectorAll: (selector: string) => any[], createElement: (tag: string) => any, createElementNS: (namespace: string, tag: string) => any, title: string, documentElement?: any, activeElement?: any}} WorkspaceDocument
  * @typedef {{preventDefault: () => void, key?: string, currentTarget: any}} WorkspaceEvent
- * @typedef {{update: (status: WorkspaceStatus) => void, failed: (text: string) => void, signedOut: () => void, refresh?: () => void}} WorkspaceController
- * @typedef {{location: {hash: string}, navigator: {clipboard?: {writeText: (text: string) => Promise<void>}}, addEventListener: (name: string, listener: () => void) => void, getComputedStyle?: (element: any) => {backgroundColor: string, getPropertyValue?: (key: string) => string}, RelayWorkspace: WorkspaceController}} WorkspaceWindow
+ * @typedef {{update: (status: WorkspaceStatus) => void, failed: (text: string) => void, signedOut: () => void, accountControls: (account: WorkspaceAccount, target: any) => boolean, renderAccounts?: () => void, refresh?: () => void}} WorkspaceController
+ * @typedef {{location: {hash: string}, navigator: {clipboard?: {writeText: (text: string) => Promise<void>}}, addEventListener: (name: string, listener: () => void) => void, setTimeout: (callback: () => void, delay: number) => number, clearTimeout: (timer: number) => void, getComputedStyle?: (element: any) => {backgroundColor: string, getPropertyValue?: (key: string) => string}, RelayWorkspace: WorkspaceController}} WorkspaceWindow
  * @typedef {{workspaceDistribution: typeof workspaceDistribution, historyDistribution: typeof historyDistribution, validHistory: typeof validHistory, workspaceAdmin: typeof workspaceAdmin, historyPath: typeof historyPath, createSeriesColors: typeof createSeriesColors}} WorkspaceHelpers
  * @typedef {{getItem: (key: string) => string|null, setItem: (key: string, value: string) => void}} ColorStorage
  * @typedef {{slot: number, custom?: string}} SeriesColorEntry
@@ -175,9 +183,17 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   var state = { status: null, view: '', team: null, editing: null, editRevision: null, authEpoch: 0,
     history: null, preview: null, selected: null, historyAt: 0, previewAt: 0,
     historySeq: 0, previewSeq: 0, distributionSort: 'value', distributionDir: -1,
-    teamAt: 0, action: null, submitting: false, lastGood: 0 };
+    teamAt: 0, action: null, submitting: false, lastGood: 0,
+    accountRows: null, accountsAt: 0, accountBusy: false, removing: null, login: null, loginBusy: false, loginEpoch: 0 };
   /** @type {Promise<void>|null} */
   var teamRequest = null;
+  /** @type {Promise<void>|null} */
+  var accountsRequest = null;
+  /** @type {number|null} */
+  var loginTimer = null;
+  /** @type {AuthContext|null} */
+  var loginContext = null;
+  var accountApiAvailable = true;
   /** @type {string|null} */
   var connectionFailure = null;
   /** @type {(() => void)|null} */
@@ -186,6 +202,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   var memberLabels = [];
   /** @type {Record<string, () => string[]>} */
   var titles = {
+    'my-accounts': function () { return [t('My accounts'), t('Connect your subscriptions and choose who can use them.'), '']; },
     overview: function () { return [t("Overview"), t("Accounts, conversations, and usage in one place."), t("GATEWAY CONTROL")]; },
     accounts: function () { return [t("Accounts"), t("Each provider, its quota, and the next path for traffic."), t("CAPACITY AND ROUTING")]; },
     team: function () { return [t("Team"), t("Individual access, explicit permissions, and clear limits."), t("WHO CAN USE IT")]; },
@@ -261,6 +278,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   /** @param {AuthContext} context */
   function requireCurrentAuth(context) { if (!currentAuth(context)) throw new Error('Authentication context changed'); }
   function admin() { return state.status && helpers.workspaceAdmin(state.status.caller, key()); }
+  function memberMode() { return state.status?.caller?.kind === 'member'; }
   function adminMessage() { return t("Use \"Change key\" and enter an administrator key to access team management and history. Client and member keys do not allow this operation."); }
   /** @param {any} target @param {string} title @param {string} text */
   function empty(target, title, text) {
@@ -271,7 +289,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   /** @param {unknown} error @returns {string} */
   function errorText(error) {
     if (error && typeof error === 'object') {
-      if ('status' in error && (error.status === 401 || error.status === 403)) return adminMessage();
+      if (!memberMode() && 'status' in error && (error.status === 401 || error.status === 403)) return adminMessage();
       if ('displayText' in error && typeof error.displayText === 'function') return error.displayText();
       if ('message' in error && typeof error.message === 'string' && error.message) return error.message;
     }
@@ -279,8 +297,8 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   }
   /** @param {() => string} render */
   function presentationError(render) { return Object.assign(new Error(render()), { displayText: render }); }
-  /** @template T @param {string|null} path @param {object} [body] @param {AuthContext} [context] @returns {Promise<T>} */
-  async function request(path, body, context = authContext()) {
+  /** @template T @param {string|null} path @param {object} [body] @param {AuthContext} [context] @param {{status?: number}} [metadata] @returns {Promise<T>} */
+  async function request(path, body, context = authContext(), metadata) {
     requireCurrentAuth(context);
     if (path === null) throw presentationError(function () { return t("Invalid gateway query."); });
     /** @type {RequestInit & {headers: Record<string, string>}} */
@@ -293,6 +311,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     var data;
     try { data = await response.json(); } catch { requireCurrentAuth(context); throw presentationError(function () { return t('Invalid gateway response (HTTP {status}).', { status: response.status }); }); }
     requireCurrentAuth(context);
+    if (metadata) metadata.status = response.status;
     if (!response.ok || data.ok === false) {
       var error = Object.assign(new Error(typeof data.error === 'string' ? data.error : t('Operation refused (HTTP {status}).', { status: response.status })), { status: response.status });
       throw error;
@@ -301,16 +320,20 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   }
   function navigate() {
     var view = window.location.hash.slice(1);
-    if (!Object.prototype.hasOwnProperty.call(titles, view)) view = 'overview';
+    if (memberMode()) view = 'my-accounts';
+    else if (!Object.prototype.hasOwnProperty.call(titles, view) || view === 'my-accounts') view = 'overview';
     var changed = state.view !== view;
     state.view = view;
     document.querySelectorAll('[data-panel]').forEach(function (panel) { panel.hidden = panel.getAttribute('data-panel') !== view; });
     document.querySelectorAll('[data-view]').forEach(function (link) {
+      link.hidden = memberMode() ? link.getAttribute('data-view') !== 'my-accounts' : link.getAttribute('data-view') === 'my-accounts';
       if (link.getAttribute('data-view') === view) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     });
     renderViewTitle();
+    $('accountMessage').hidden = ['my-accounts', 'accounts', 'team'].indexOf(view) < 0;
     if (changed && state.status) {
+      if (view === 'my-accounts' || view === 'accounts') loadAccounts();
       if (view === 'team') loadTeam();
       if (view === 'usage') loadHistory(true);
       if (view === 'overview') loadPreview();
@@ -320,6 +343,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     var title = titles[state.view]();
     $('viewTitle').textContent = title[0]; $('viewCrumb').textContent = title[0];
     $('viewDescription').textContent = title[1]; $('viewEyebrow').textContent = title[2];
+    $('viewEyebrow').hidden = !title[2];
     document.title = title[0] + ' · RelayCrew';
   }
   /** @param {string} label @param {string} amount @param {string} caption */
@@ -421,8 +445,15 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   /** @param {WorkspaceStatus} status */
   function update(status) {
     state.status = status; state.lastGood = Date.now(); connectionFailure = null;
+    navigate();
+    $('summary').hidden = memberMode();
+    $('accountsRefresh').hidden = !admin() || !accountApiAvailable;
+    ['.gateway-pill', '.sidebar-note', '.nav-caption'].forEach(function (selector) {
+      document.querySelectorAll(selector).forEach(function (element) { element.hidden = memberMode(); });
+    });
     if ($('previewLabel')) $('previewLabel').hidden = !status.dashboardPreview;
     $('connection').textContent = t('Updated at {time}', { time: i18n.date(state.lastGood, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) });
+    if (memberMode()) { if (Date.now() - state.accountsAt >= 5000) loadAccounts(); return; }
     updateOverview(status); updateScopes(status); renderPins(status);
     document.querySelectorAll('th.sortable').forEach(function (header) {
       header.tabIndex = 0; header.setAttribute('role', 'columnheader');
@@ -431,6 +462,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     if (state.view === 'overview' && Date.now() - state.previewAt > 30000) loadPreview();
     if (state.view === 'usage' && Date.now() - state.historyAt > 30000) loadHistory();
     if (state.view === 'team' && Date.now() - state.teamAt > 30000) loadTeam();
+    if (state.view === 'accounts' && Date.now() - state.accountsAt >= 5000) loadAccounts();
   }
   /** @param {string} text */
   function failed(text) {
@@ -439,18 +471,227 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     $('connection').title = text;
   }
   function signedOut() {
+    cancelAccountLogin();
     state.team = null; state.history = null; state.preview = null; state.status = null; previewNotice = null; memberLabels = [];
     state.authEpoch++; state.historySeq++; state.previewSeq++;
     teamRequest = null; state.submitting = false; state.editing = null; state.editRevision = null; state.action = null;
-    state.teamAt = 0; state.historyAt = 0; state.previewAt = 0;
+    state.teamAt = 0; state.historyAt = 0; state.previewAt = 0; state.lastGood = 0; connectionFailure = null;
+    state.accountRows = null; state.accountsAt = 0; accountsRequest = null; accountApiAvailable = true;
+    state.accountBusy = false; state.removing = null;
+    $('myAccountsContent').textContent = ''; $('myAccountsRefresh').disabled = false; $('accountRemoveConfirm').disabled = false;
+    ['accounts', 'summary', 'problems', 'overviewStats', 'providerSummary', 'overviewAttention', 'routes', 'clients', 'dimensionsWrap', 'sessions', 'sessionPinsList', 'foot'].forEach(function (id) { $(id).textContent = ''; });
     $('teamAdd').disabled = true; $('teamRefresh').disabled = false; $('memberSave').disabled = false; $('confirmAction').disabled = false; $('historyRefresh').disabled = false;
     $('pinSave').disabled = true;
     $('memberForm').reset(); $('memberName').value = ''; $('memberLimit').value = ''; $('memberAll').checked = false; $('memberDisabled').checked = false; $('memberAccounts').textContent = '';
     $('issuedKey').value = ''; $('issuedKey').textContent = '';
-    ['teamMessage', 'memberError', 'confirmError', 'issuedMessage', 'sessionPinMessage'].forEach(function (id) { message(id, function () { return ''; }); });
+    ['teamMessage', 'memberError', 'confirmError', 'issuedMessage', 'sessionPinMessage', 'accountMessage', 'accountRemoveError'].forEach(function (id) { message(id, function () { return ''; }); });
     $('teamContent').textContent = ''; $('historyChart').textContent = ''; $('historyDistribution').textContent = ''; $('historyTable').textContent = ''; $('overviewHistory').textContent = '';
-    ['memberDialog', 'confirmDialog', 'issuedDialog'].forEach(function (id) { if ($(id).open) $(id).close(); });
+    ['memberDialog', 'confirmDialog', 'issuedDialog', 'accountRemoveDialog'].forEach(function (id) { if ($(id).open) $(id).close(); });
   }
+  function repaintAccounts() {
+    var focusKey = document.activeElement?.getAttribute?.('data-workspace-focus');
+    renderMyAccounts();
+    if (window.RelayWorkspace.renderAccounts) window.RelayWorkspace.renderAccounts();
+    renderTeam();
+    if (focusKey) document.querySelectorAll('[data-workspace-focus]').forEach(function (element) { if (element.getAttribute('data-workspace-focus') === focusKey) element.focus(); });
+  }
+  /** @returns {Promise<void>} */
+  function loadAccounts() {
+    if (accountsRequest) return accountsRequest;
+    if ((!memberMode() && !admin()) || !accountApiAvailable) return Promise.resolve();
+    var context = authContext();
+    state.accountsAt = Date.now(); $('myAccountsRefresh').disabled = true; $('accountsRefresh').disabled = true;
+    if (window.RelayWorkspace.renderAccounts) window.RelayWorkspace.renderAccounts();
+    message('accountMessage', function () { return t('Updating accounts…'); });
+    accountsRequest = (async function () {
+      try {
+        /** @type {{accounts: TeamAccount[]}} */
+        var data = await request('/relaycrew/accounts', undefined, context);
+        if (!Array.isArray(data.accounts)) throw presentationError(function () { return t('Invalid accounts response.'); });
+        state.accountRows = data.accounts; repaintAccounts();
+        message('accountMessage', function () { return ''; });
+      } catch (error) {
+        if (!currentAuth(context)) return;
+        if (admin() && error && typeof error === 'object' && 'status' in error && error.status === 404) {
+          accountApiAvailable = false; $('accountsRefresh').hidden = true; state.accountRows = []; repaintAccounts(); message('accountMessage', function () { return ''; });
+        } else message('accountMessage', function () { return t('Could not refresh accounts. {error} Use "Refresh" to try again.', { error: errorText(error) }); }, 'error');
+      } finally { if (currentAuth(context)) { accountsRequest = null; $('myAccountsRefresh').disabled = false; $('accountsRefresh').disabled = false; } }
+    })();
+    return accountsRequest;
+  }
+  /** @param {TeamAccount} account */
+  function sharingLabel(account) { return account.sharing === 'private' ? t('Private') : t('Pool'); }
+  /** @param {TeamAccount} account */
+  function accountActions(account) {
+    var actions = node('div', 'button-row');
+    var toggle = button(account.disabled ? t('Enable') : t('Disable'), function () { return changeAccount(account, { disabled: !account.disabled }); });
+    toggle.setAttribute('aria-label', account.disabled ? t('Enable {account}', { account: account.name }) : t('Disable {account}', { account: account.name }));
+    toggle.disabled = state.accountBusy || (memberMode() && account.disabledBy === 'admin');
+    if (memberMode() && account.disabledBy === 'admin') toggle.title = t('Disabled by an administrator');
+    actions.appendChild(toggle);
+    if (memberMode()) {
+      var share = button(account.sharing === 'private' ? t('Share with the pool') : t('Make private'), function () { return changeAccount(account, { sharing: account.sharing === 'private' ? 'pool' : 'private' }); });
+      share.disabled = state.accountBusy; actions.appendChild(share);
+    }
+    var remove = button(t('Remove'), function () {
+      if (state.accountBusy) return;
+      state.removing = account; renderAccountRemoval(); message('accountRemoveError', function () { return ''; }); $('accountRemoveDialog').showModal();
+    });
+    remove.setAttribute('aria-label', t('Remove {account}', { account: account.name }));
+    remove.disabled = state.accountBusy; actions.appendChild(remove);
+    actions.querySelectorAll('button').forEach(/** @param {any} control @param {number} index */ function (control, index) { control.setAttribute('data-workspace-focus', JSON.stringify(['account', account.id, index])); });
+    return actions;
+  }
+  /** @param {TeamAccount[]} accounts @param {boolean} owner */
+  function accountTable(accounts, owner) {
+    var table = node('table', 'owned-accounts'), head = node('thead'), headers = node('tr');
+    var labels = [t('Name'), t('Provider')]; if (owner) labels.push(t('Owner'));
+    labels.concat([t('Sharing'), t('State'), t('Actions')]).forEach(function (label) { var th = node('th', '', label); th.scope = 'col'; headers.appendChild(th); });
+    head.appendChild(headers); table.appendChild(head);
+    var body = node('tbody');
+    accounts.forEach(function (account) {
+      var row = node('tr');
+      var values = [account.name, account.provider === 'anthropic' || account.provider === 'claude' ? 'Claude' : account.provider === 'codex' ? 'ChatGPT/Codex' : account.provider === 'grok' ? 'Grok' : account.provider];
+      if (owner) values.push(account.owner || '');
+      values.push(sharingLabel(account), account.disabledBy === 'admin' ? t('Disabled by an administrator') : account.disabled ? t('Disabled') : t('Enabled'));
+      values.forEach(function (value) { row.appendChild(node('td', '', value)); });
+      var controls = node('td'); controls.appendChild(accountActions(account)); row.appendChild(controls); body.appendChild(row);
+    }); table.appendChild(body); return table;
+  }
+  function renderMyAccounts() {
+    var target = $('myAccountsContent'); target.textContent = '';
+    if (!memberMode() || !state.accountRows) return;
+    if (!state.accountRows.length) { empty(target, t('No accounts of your own yet'), t('Choose "Add my account" to connect a subscription. You decide whether to keep it private or share it with the pool.')); return; }
+    target.appendChild(accountTable(state.accountRows, false));
+  }
+  /** Called by the fleet card renderer; ownership metadata comes from the account API. @param {WorkspaceAccount} account @param {any} target */
+  function accountControls(account, target) {
+    if (!admin()) return false;
+    if (!state.accountRows) return state.view === 'accounts';
+    var matches = state.accountRows.filter(function (entry) { return account.id ? entry.id === account.id : entry.name === account.name && entry.provider === (account.provider || 'anthropic'); });
+    if (matches.length > 1) return true;
+    var row = matches[0];
+    if (!row?.owner) return false;
+    target.appendChild(node('span', 'muted', t('Owner: {owner}', { owner: row.owner })));
+    target.appendChild(node('span', 'muted', t('Sharing: {sharing}', { sharing: sharingLabel(row) })));
+    target.appendChild(accountActions(row)); return true;
+  }
+  /** @param {TeamAccount} account @param {{disabled?: boolean, sharing?: string}} change */
+  async function changeAccount(account, change) {
+    if (state.accountBusy || (!memberMode() && !admin())) return;
+    var context = authContext(); state.accountBusy = true; repaintAccounts();
+    try {
+      /** @type {MutationPayload} */
+      var data = await request('/relaycrew/accounts/update', Object.assign({ id: account.id }, change), context);
+      await refreshAccountChange(data, context);
+    } catch (error) { if (currentAuth(context)) message('accountMessage', function () { return errorText(error); }, 'error'); }
+    finally { if (currentAuth(context)) { state.accountBusy = false; repaintAccounts(); } }
+  }
+  /** @param {MutationPayload} data @param {AuthContext} context */
+  async function refreshAccountChange(data, context) {
+    if (accountsRequest) await accountsRequest;
+    requireCurrentAuth(context); await loadAccounts(); requireCurrentAuth(context);
+    if (state.view === 'team') await loadTeam();
+    requireCurrentAuth(context);
+    message('accountMessage', function () { return data.applied === false ? t('Change saved; applying it to the gateway is pending. Reload the configuration. {warning}', { warning: data.warning || '' }) : t('Change applied to the gateway.'); }, data.applied === false ? 'warn' : 'ok');
+    if (!memberMode() && window.RelayWorkspace.refresh) window.RelayWorkspace.refresh();
+  }
+  function renderAccountRemoval() {
+    if (state.removing) $('accountRemoveTitle').textContent = t('Remove {account}?', { account: state.removing.name });
+  }
+  $('accountRemoveConfirm').addEventListener('click', async function () {
+    if (!state.removing || state.accountBusy || (!memberMode() && !admin())) return;
+    var context = authContext(), account = state.removing;
+    state.accountBusy = true; $('accountRemoveConfirm').disabled = true;
+    try {
+      /** @type {MutationPayload} */
+      var data = await request('/relaycrew/accounts/remove', { id: account.id }, context);
+      $('accountRemoveDialog').close(); await refreshAccountChange(data, context);
+    } catch (error) { if (currentAuth(context)) message('accountRemoveError', function () { return errorText(error); }, 'error'); }
+    finally { if (currentAuth(context)) { state.accountBusy = false; $('accountRemoveConfirm').disabled = false; repaintAccounts(); } }
+  });
+  function resetAccountLogin() {
+    state.loginEpoch++; state.login = null; state.loginBusy = false; loginContext = null;
+    if (loginTimer !== null) window.clearTimeout(loginTimer); loginTimer = null;
+    $('accountLoginCode').value = ''; $('accountLoginUserCode').textContent = ''; $('accountLoginLink').removeAttribute('href');
+    message('accountLoginMessage', function () { return ''; }); message('accountLoginError', function () { return ''; });
+    renderAccountLogin();
+  }
+  /** @param {AccountLogin} login @param {AuthContext} context */
+  function cancelPendingLogin(login, context) {
+    // Cleanup must use the initiating key even when the user is changing keys.
+    return fetch('/relaycrew/accounts/login/cancel', { method: 'POST', headers: { 'x-api-key': context.key || '', 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify({ id: login.id }) }).catch(function () {});
+  }
+  function cancelAccountLogin() {
+    var login = state.login, context = loginContext || authContext();
+    resetAccountLogin(); if ($('accountLoginDialog').open) $('accountLoginDialog').close();
+    if (login) cancelPendingLogin(login, context);
+  }
+  function renderAccountLogin() {
+    var login = state.login;
+    $('accountLoginChoices').hidden = !!login; $('accountLoginSteps').hidden = !login;
+    $('accountLoginProvider').disabled = state.loginBusy; $('accountLoginSharing').disabled = state.loginBusy;
+    $('accountLoginSharingHelp').textContent = $('accountLoginSharing').value === 'pool' ? t('Team members can use this account when their account permissions allow it.') : t('Only your key can use this account.');
+    $('accountLoginSubmit').textContent = login ? t('Connect account') : t('Continue to sign-in');
+    $('accountLoginSubmit').disabled = state.loginBusy; $('accountLoginSubmit').hidden = login?.paste === 'none';
+    $('accountLoginPaste').hidden = !login || login.paste === 'none'; $('accountLoginCode').required = !!login && login.paste !== 'none';
+    $('accountLoginDevice').hidden = login?.paste !== 'none';
+    if (!login) return;
+    $('accountLoginLink').setAttribute('href', login.url); $('accountLoginLink').setAttribute('target', '_blank'); $('accountLoginLink').setAttribute('rel', 'noopener noreferrer');
+    $('accountLoginHelp').textContent = login.paste === 'callback-url' ? t('After sign-in, your browser ends on a localhost page that does not load. Copy its address from the address bar.') : login.paste === 'none' ? t('Open the link and confirm this code on the provider page.') : t('Open the link, sign in, and copy the code shown on the page.');
+    $('accountLoginLabel').textContent = login.paste === 'callback-url' ? t('Paste the full address from the address bar') : t('Paste the code the page shows');
+    $('accountLoginUserCode').textContent = login.userCode || '';
+  }
+  /** @param {AccountLogin} login @param {AuthContext} context @param {number} epoch */
+  async function completeAccountLogin(login, context, epoch) {
+    if (epoch !== state.loginEpoch || !currentAuth(context) || state.loginBusy) return;
+    state.loginBusy = true; renderAccountLogin(); message('accountLoginError', function () { return ''; });
+    message('accountLoginMessage', function () { return login.paste === 'none' ? t('Waiting for you to confirm the code… You can cancel at any time.') : t('Connecting account…'); });
+    try {
+      /** @type {{status?: number}} */
+      var response = {};
+      /** @type {MutationPayload} */
+      var data = await request('/relaycrew/accounts/login/complete', login.paste === 'none' ? { id: login.id } : { id: login.id, code: $('accountLoginCode').value.trim() }, context, response);
+      if (epoch !== state.loginEpoch) return;
+      if (response.status === 202 && login.paste === 'none') {
+        loginTimer = window.setTimeout(function () { loginTimer = null; completeAccountLogin(login, context, epoch); }, 2000);
+        return;
+      }
+      resetAccountLogin(); $('accountLoginDialog').close(); await refreshAccountChange(data, context);
+    } catch (error) {
+      if (!currentAuth(context) || epoch !== state.loginEpoch) return;
+      message('accountLoginMessage', function () { return ''; });
+      message('accountLoginError', function () { return error && typeof error === 'object' && 'status' in error && error.status === 409 ? t('This account is already in the gateway.') : errorText(error); }, 'error');
+    } finally { if (currentAuth(context) && epoch === state.loginEpoch) { state.loginBusy = false; renderAccountLogin(); } }
+  }
+  $('accountLoginForm').addEventListener('submit', /** @param {WorkspaceEvent} event */ async function (event) {
+    event.preventDefault(); if (!memberMode() || state.loginBusy) return;
+    var context = authContext(), epoch = state.loginEpoch;
+    if (state.login) { await completeAccountLogin(state.login, context, epoch); return; }
+    state.loginBusy = true; renderAccountLogin(); message('accountLoginError', function () { return ''; }); message('accountLoginMessage', function () { return t('Starting sign-in…'); });
+    try {
+      /** @type {{login: AccountLogin}} */
+      var data = await request('/relaycrew/accounts/login', { provider: $('accountLoginProvider').value, sharing: $('accountLoginSharing').value }, context);
+      if (epoch !== state.loginEpoch) { cancelPendingLogin(data.login, context); return; }
+      state.login = data.login; loginContext = context; state.loginBusy = false; renderAccountLogin(); message('accountLoginMessage', function () { return ''; });
+      if (data.login.paste !== 'none') $('accountLoginCode').focus();
+    } catch (error) {
+      if (!currentAuth(context) || epoch !== state.loginEpoch) return;
+      message('accountLoginMessage', function () { return ''; }); message('accountLoginError', function () { return errorText(error); }, 'error');
+    } finally { if (currentAuth(context) && epoch === state.loginEpoch) { state.loginBusy = false; renderAccountLogin(); } }
+    if (currentAuth(context) && epoch === state.loginEpoch && state.login?.paste === 'none') completeAccountLogin(state.login, context, epoch);
+  });
+  $('accountAdd').addEventListener('click', function () {
+    if (!memberMode()) return;
+    resetAccountLogin(); $('accountLoginProvider').value = 'claude'; $('accountLoginSharing').value = 'private'; renderAccountLogin(); $('accountLoginDialog').showModal();
+  });
+  $('myAccountsRefresh').addEventListener('click', loadAccounts);
+  $('accountsRefresh').addEventListener('click', loadAccounts);
+  $('accountLoginSharing').addEventListener('change', renderAccountLogin);
+  ['accountLoginCancel', 'accountLoginClose'].forEach(function (id) { $(id).addEventListener('click', cancelAccountLogin); });
+  $('accountLoginDialog').addEventListener('cancel', /** @param {WorkspaceEvent} event */ function (event) { event.preventDefault(); cancelAccountLogin(); });
+  $('accountRemoveDialog').addEventListener('cancel', /** @param {WorkspaceEvent} event */ function (event) { if (state.accountBusy) event.preventDefault(); });
+  $('accountRemoveDialog').addEventListener('close', function () { state.removing = null; });
   /** @param {string} tag @param {Record<string, string|number>} attrs @returns {any} */
   function svgElement(tag, attrs) {
     var element = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -623,14 +864,14 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     var target = $('teamContent'); target.textContent = '';
     const team = state.team;
     if (!team) return;
-    if (!team.members.length) { empty(target, t("A team starts with its first access"), t("Add a member, choose their accounts, and share the individual key securely.")); return; }
+    if (!team.members.length) empty(target, t("A team starts with its first access"), t("Add a member, choose their accounts, and share the individual key securely."));
     /** @type {Record<string, string>} */
     var accounts = Object.create(null); team.accounts.forEach(function (account) { accounts[account.id] = account.name; });
     var table = node('table'), head = node('thead'), hr = node('tr');
     [t("Member"), t("Allowed accounts"), t("Concurrency"), t("Requests"), t("Input / output tokens"), t("Last used"), t("Access"), t("Actions")].forEach(function (label) { var th = node('th', '', label); th.scope = 'col'; hr.appendChild(th); }); head.appendChild(hr); table.appendChild(head);
     var body = node('tbody'); team.members.forEach(function (member) {
       var row = node('tr'), usage = member.usage || {};
-      [member.name, member.accounts === '*' ? t("All · current and future") : member.accounts.length ? member.accounts.map(function (id) { return accounts[id] || id; }).join(', ') : t("No inference access"), number(member.active) + ' / ' + number(member.maxConcurrent), number(usage.requests), number(usage.inputTokens) + ' / ' + number(usage.outputTokens), usage.lastUsed ? timeLabel(usage.lastUsed, true) : t("Not used yet"), member.disabled ? t("Disabled") : t("Active")].forEach(function (value) { row.appendChild(node('td', '', value)); });
+      [member.name, member.accounts === '*' ? t("All · current and future") : member.accounts.length ? member.accounts.map(function (id) { return accounts[id] || id; }).join(', ') : ownsAccounts(member.name) ? t('Own accounts only') : t("No inference access"), number(member.active) + ' / ' + number(member.maxConcurrent), number(usage.requests), number(usage.inputTokens) + ' / ' + number(usage.outputTokens), usage.lastUsed ? timeLabel(usage.lastUsed, true) : t("Not used yet"), member.disabled ? t("Disabled") : t("Active")].forEach(function (value) { row.appendChild(node('td', '', value)); });
       var actions = node('td'), buttons = node('div', 'button-row');
       buttons.appendChild(button(t("Edit"), function () { openMember(member); }));
       buttons.appendChild(button(t("Rotate key"), function () { confirmMember(member, 'rotate'); }));
@@ -638,7 +879,9 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
       buttons.querySelectorAll('button').forEach(/** @param {any} control @param {number} index */ function (control, index) { control.setAttribute('data-workspace-focus', JSON.stringify(['member', member.name, index])); });
       if (!team.enabled) buttons.querySelectorAll('button').forEach(/** @param {any} control */ function (control) { control.disabled = true; });
       actions.appendChild(buttons); row.appendChild(actions); body.appendChild(row);
-    }); table.appendChild(body); target.appendChild(table);
+    }); table.appendChild(body); if (team.members.length) target.appendChild(table);
+    var owned = team.accounts.filter(function (account) { return !!account.owner; });
+    if (owned.length) { target.appendChild(node('h3', 'distribution-heading', t('Member-owned accounts'))); target.appendChild(accountTable(owned, true)); }
   }
   /** @param {TeamMember|null} member */
   function openMember(member) {
@@ -651,6 +894,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     $('memberTitle').textContent = member ? t('Edit {name}', { name: member.name }) : t("Add member"); $('memberSave').textContent = member ? t("Save permissions") : t("Create member and key");
     var choices = $('memberAccounts'); choices.textContent = ''; memberLabels = [];
     team.accounts.forEach(function (account) {
+      if (account.owner && account.sharing === 'private' && account.owner !== member?.name) return;
       var label = node('label', 'check-line'), input = node('input'); input.type = 'checkbox'; input.value = account.id; input.addEventListener('change', toggleAccounts);
       input.checked = !!member && Array.isArray(member.accounts) && member.accounts.indexOf(account.id) >= 0;
       label.appendChild(input); label.appendChild(memberLabel(function () { return account.disabled ? t('{account} · {provider} · disabled', { account: account.name, provider: account.provider }) : account.name + ' · ' + account.provider; })); choices.appendChild(label);
@@ -665,6 +909,8 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   }
   /** @param {() => string} render */
   function memberLabel(render) { var element = node('span', '', render()); memberLabels.push({ element: element, render: render }); return element; }
+  /** @param {string|null} name @param {TeamPayload|null} [team] */
+  function ownsAccounts(name, team = state.team) { return !!name && !!team?.accounts.some(function (account) { return account.owner === name; }); }
   function renderMemberLabels() {
     $('memberTitle').textContent = state.editing ? t('Edit {name}', { name: state.editing }) : t('Add member');
     $('memberSave').textContent = state.editing ? t('Save permissions') : t('Create member and key');
@@ -672,7 +918,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   }
   function toggleAccounts() {
     $('memberAccounts').querySelectorAll('input').forEach(/** @param {any} input */ function (input) { input.disabled = $('memberAll').checked; });
-    message('memberError', function () { return !$('memberAll').checked && !$('memberAccounts').querySelectorAll('input:checked').length ? t("No inference access: this member cannot send requests until assigned an account.") : ''; }, 'warn');
+    message('memberError', function () { return !$('memberAll').checked && !$('memberAccounts').querySelectorAll('input:checked').length ? ownsAccounts(state.editing) ? t('No additional accounts selected. This member can still use their own accounts.') : t("No inference access: this member cannot send requests until assigned an account.") : ''; }, 'warn');
   }
   /** @param {MutationPayload} data @param {AuthContext} context */
   function revealKey(data, context) {
@@ -697,7 +943,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     if (!team) return t("Could not read the current policy. Refresh the team before trying again.");
     var member = team.members.find(function (entry) { return entry.name === name; });
     if (!member) return t('Current server policy: member "{name}" does not exist.', { name: name });
-    var grants = member.accounts === '*' ? t("all current and future accounts") : !member.accounts.length ? t("no inference access") : member.accounts.map(function (id) {
+    var grants = member.accounts === '*' ? t("all current and future accounts") : !member.accounts.length ? ownsAccounts(member.name, team) ? t('Own accounts only') : t("no inference access") : member.accounts.map(function (id) {
       var account = team.accounts.find(function (entry) { return entry.id === id; }); return account ? account.name + ' (' + id + ')' : t('{account} (missing account)', { account: id });
     }).join(', ');
     return t('Current server policy for "{name}": {grants}; limit {limit}; {status}.', { name: name, grants: grants, limit: number(member.maxConcurrent), status: member.disabled ? t('disabled') : t('active') });
@@ -774,7 +1020,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     } catch { if (!currentAuth(context) || !$('issuedDialog').open || $('issuedKey').value !== secret) return; $('issuedKey').focus(); $('issuedKey').select(); message('issuedMessage', function () { return t("Automatic copy unavailable. The key is selected: use Ctrl+C or ⌘C."); }); }
   });
   document.querySelectorAll('[data-close]').forEach(function (control) {
-    control.addEventListener('click', function () { if (!state.submitting) $(control.getAttribute('data-close')).close(); });
+    control.addEventListener('click', function () { if (!state.submitting && !(control.getAttribute('data-close') === 'accountRemoveDialog' && state.accountBusy)) $(control.getAttribute('data-close')).close(); });
   });
   ['memberDialog', 'confirmDialog'].forEach(function (id) { $(id).addEventListener('cancel', /** @param {WorkspaceEvent} event */ function (event) { if (state.submitting) event.preventDefault(); }); });
   $('issuedDialog').addEventListener('close', function () { $('issuedKey').value = ''; $('issuedKey').textContent = ''; message('issuedMessage', function () { return ''; }); });
@@ -796,20 +1042,20 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     var active = document.activeElement;
     var focusKey = active?.getAttribute?.('data-workspace-focus');
     renderViewTitle();
-    if (state.status) updateOverview(state.status);
+    if (state.status && !memberMode()) updateOverview(state.status);
     if (connectionFailure !== null) {
       $('connection').textContent = state.lastGood ? t('Not updating · showing the last status') : t('No connection to the gateway');
     } else if (state.lastGood) {
       $('connection').textContent = t('Updated at {time}', { time: i18n.date(state.lastGood, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) });
     }
     $('historyScope').querySelectorAll('option').forEach(/** @param {any} option */ function (option) { if (option.value === 'clients') option.textContent = t('Clients'); });
-    renderPreview(); renderHistory(); renderTeam(); renderMemberLabels(); renderConfirmation();
+    renderPreview(); renderHistory(); renderTeam(); renderMemberLabels(); renderConfirmation(); renderMyAccounts(); renderAccountLogin(); renderAccountRemoval();
     Object.keys(notices).forEach(function (id) { $(id).textContent = notices[id](); });
     if (focusKey) document.querySelectorAll('[data-workspace-focus]').forEach(function (element) { if (element.getAttribute('data-workspace-focus') === focusKey) element.focus(); });
   }
   i18n.onChange(refreshPresentation);
   window.addEventListener('hashchange', navigate);
-  window.RelayWorkspace = { update: update, failed: failed, signedOut: signedOut };
+  window.RelayWorkspace = { update: update, failed: failed, signedOut: signedOut, accountControls: accountControls };
   navigate();
 }
 

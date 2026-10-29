@@ -56,29 +56,179 @@ test('assembled workspace remains static and every script is admitted by CSP', (
   assert.doesNotMatch(html, /<script[^>]+src=|<link[^>]+href=/);
 });
 
-function boot({ key = 'admin-key', caller = { kind: 'operator', refused: [] }, locale = 'pt-BR', stored = [] } = {}) {
+function boot({ key = 'admin-key', caller = { kind: 'operator', refused: [] }, locale = 'pt-BR', stored = [], live = false, hash = '#team' } = {}) {
   const { document, $ } = makeDashboardDom(WORKSPACE_HTML);
   const events = {}, requests = [], store = new Map([...(key ? [['relaycrew-dashboard-key', key]] : []), ...(locale ? [['relaycrew-dashboard-locale', locale]] : []), ...stored]);
   const localStorage = { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value), removeItem: key => store.delete(key) };
-  const window = { localStorage, location: { hash: '#team' }, navigator: {}, getComputedStyle: () => ({ backgroundColor: 'rgb(37, 99, 235)' }), addEventListener(type, handler) { events[type] = handler; } };
+  const timers = new Map(); let timerId = 0;
+  const window = { localStorage, location: { hash }, navigator: {}, getComputedStyle: () => ({ backgroundColor: 'rgb(37, 99, 235)' }), addEventListener(type, handler) { events[type] = handler; }, setTimeout(callback, delay) { timers.set(++timerId, { callback, delay }); return timerId; }, clearTimeout(id) { timers.delete(id); } };
   new Function('document', 'window', I18N_SCRIPT)(document, window);
   const fetch = (url, init) => new Promise(resolve => requests.push({ url, init, resolve }));
   new Function('document', 'window', 'fetch', WORKSPACE_SCRIPT)(document, window, fetch);
   const status = { caller, accounts: [], sessions: {}, clients: {}, usageDimensions: {}, configuredUsageDimensions: ['project'] };
   const flush = () => new Promise(resolve => setImmediate(resolve));
   const answer = async (status, body) => { const req = requests.shift(); assert.ok(req, 'request expected'); req.resolve({ status, ok: status >= 200 && status < 300, json: async () => body }); await flush(); return req; };
-  window.RelayWorkspace.update(status);
-  return { $, document, requests, window, status, store, flush, answer, navigate: async view => { window.location.hash = '#' + view; events.hashchange(); await flush(); } };
+  if (live) new Function('document', 'window', 'fetch', 'setInterval', 'clearInterval', inlineScripts(renderDashboardHtml()).at(-1))(document, window, fetch, () => 1, () => {});
+  else window.RelayWorkspace.update(status);
+  return { $, document, requests, window, status, store, timers, flush, answer, navigate: async view => { window.location.hash = '#' + view; events.hashchange(); await flush(); }, tick: async () => { const [id, timer] = timers.entries().next().value; timers.delete(id); timer.callback(); await flush(); } };
 }
 const team = () => ({ ok: true, enabled: true, revision: 'rev-1', accounts: [{ id: 'account-id', name: '<img src=x onerror=alert(1)>', provider: 'anthropic' }], members: [{ name: 'marina', accounts: ['account-id'], maxConcurrent: 4, active: 1, disabled: false, usage: { requests: 5 } }] });
 
 test('browser refuses admin-only APIs for keyless loopback and member/legacy credentials', async () => {
   for (const options of [{ key: null }, { caller: { kind: 'member' } }, { caller: { kind: 'client' } }]) {
     const page = boot(options);
+    if (options.caller?.kind === 'member') {
+      assert.equal(page.requests[0].url, '/relaycrew/accounts'); await page.answer(200, { accounts: [] });
+      assert.equal(page.$('viewTitle').textContent, 'Minhas contas');
+    } else assert.match(page.$('teamMessage').textContent, /administrador/);
     assert.equal(page.requests.length, 0);
-    assert.match(page.$('teamMessage').textContent, /administrador/);
     assert.equal(page.$('teamAdd').disabled, true);
   }
+});
+
+const ownAccount = (extra = {}) => ({ id: 'own-account', name: 'Personal subscription', provider: 'anthropic', owner: 'marina', sharing: 'private', disabled: false, ...extra });
+const memberPage = () => boot({ key: 'member-key', caller: { kind: 'member' }, locale: null });
+
+test('member sign-in falls back from status 403 to me and exposes only My accounts', async () => {
+  const page = boot({ key: 'member-key', locale: null, live: true });
+  assert.equal(page.requests[0].url, '/relaycrew/status');
+  await page.answer(403, { error: 'Members cannot inspect fleet status' });
+  assert.equal(page.requests[0].url, '/relaycrew/me');
+  assert.equal(page.requests[0].init.headers['x-api-key'], 'member-key');
+  await page.answer(200, { member: 'marina', accounts: '*', usage: { requests: 7 } });
+  assert.equal(page.store.get('relaycrew-dashboard-key'), 'member-key');
+  assert.equal(page.$('app').style.display, ''); assert.equal(page.$('keybox').style.display, 'none');
+  assert.equal(page.requests[0].url, '/relaycrew/accounts');
+  await page.answer(200, { accounts: [ownAccount({ disabled: true, disabledBy: 'admin' })] });
+  assert.match(page.$('myAccountsContent').textContent, /Personal subscription.*Claude.*Private.*Disabled by an administrator/);
+  assert.equal(page.$('myAccountsContent').querySelectorAll('button').find(button => button.textContent === 'Enable').disabled, true);
+  await page.navigate('team');
+  assert.deepEqual(page.document.querySelectorAll('[data-panel]').filter(panel => !panel.hidden).map(panel => panel.getAttribute('data-panel')), ['my-accounts']);
+  assert.deepEqual(page.document.querySelectorAll('[data-view]').filter(link => !link.hidden).map(link => link.getAttribute('data-view')), ['my-accounts']);
+  assert.equal(page.$('summary').hidden, true); assert.equal(page.$('teamContent').textContent, ''); assert.equal(page.requests.length, 0);
+});
+
+test('member authentication retains transient failures and discards late me responses after a key change', async () => {
+  for (const status of [401, 403, 500]) {
+    const page = boot({ key: 'member-key', locale: null, live: true });
+    await page.answer(403, {}); await page.answer(status, {});
+    assert.equal(page.store.get('relaycrew-dashboard-key'), status === 500 ? 'member-key' : undefined);
+    assert.equal(page.requests.length, 0);
+  }
+  const page = boot({ key: 'member-key', locale: null, live: true });
+  await page.answer(403, {});
+  const old = page.requests.shift(); let finishBody;
+  old.resolve({ status: 200, ok: true, json: () => new Promise(resolve => { finishBody = resolve; }) }); await page.flush();
+  await page.$('changeKey').fire('click'); page.$('key').value = 'new-key'; await page.$('go').fire('click');
+  finishBody({ member: 'old-member' }); await page.flush();
+  assert.equal(page.store.get('relaycrew-dashboard-key'), 'new-key');
+  assert.equal(page.requests.length, 1); assert.equal(page.requests[0].url, '/relaycrew/status');
+  assert.equal(page.$('myAccountsContent').textContent, '');
+  await page.answer(401, {});
+});
+
+test('add account dialog sends provider/sharing and the correct completion body for all three providers', async () => {
+  for (const [provider, paste, sharing, code] of [['claude', 'code', 'private', 'code#state'], ['codex', 'callback-url', 'pool', 'http://localhost:1455/auth/callback?code=auth&state=state'], ['grok', 'none', 'pool', null]]) {
+    const page = memberPage(); await page.answer(200, { accounts: [] });
+    await page.$('accountAdd').fire('click');
+    page.$('accountLoginProvider').value = provider; page.$('accountLoginSharing').value = sharing;
+    const start = page.$('accountLoginForm').fire('submit'); await page.flush();
+    assert.equal(page.requests[0].url, '/relaycrew/accounts/login');
+    assert.deepEqual(JSON.parse(page.requests[0].init.body), { provider, sharing });
+    const login = { id: 'login-' + provider, provider, paste, url: 'https://provider.test/authorize', ...(code === null ? { userCode: 'ABCD-EFGH' } : {}) };
+    await page.answer(201, { login }); await start;
+    assert.equal(page.$('accountLoginLink').getAttribute('href'), login.url);
+    assert.equal(page.$('accountLoginLink').getAttribute('target'), '_blank'); assert.equal(page.$('accountLoginLink').getAttribute('rel'), 'noopener noreferrer');
+    if (code === null) {
+      assert.equal(page.$('accountLoginUserCode').textContent, 'ABCD-EFGH');
+      assert.deepEqual(JSON.parse(page.requests[0].init.body), { id: login.id });
+      await page.answer(202, { ok: true, pending: true });
+      assert.match(page.$('accountLoginMessage').textContent, /Waiting.*cancel/);
+      await page.$('accountLoginCancel').fire('click');
+      assert.equal(page.requests[0].url, '/relaycrew/accounts/login/cancel'); assert.deepEqual(JSON.parse(page.requests[0].init.body), { id: login.id });
+      await page.answer(200, { ok: true }); assert.equal(page.timers.size, 0);
+    } else {
+      assert.equal(page.$('accountLoginLabel').textContent, provider === 'claude' ? 'Paste the code the page shows' : 'Paste the full address from the address bar');
+      if (provider === 'codex') assert.match(page.$('accountLoginHelp').textContent, /localhost page that does not load/);
+      page.$('accountLoginCode').value = code;
+      if (provider === 'claude') {
+        for (const [status, text] of [[400, 'Paste the full code including state'], [409, 'This account is already in the gateway.']]) {
+          const complete = page.$('accountLoginForm').fire('submit'); await page.flush();
+          await page.answer(status, { ok: false, error: status === 400 ? text : 'ownership conflict' }); await complete;
+          assert.equal(page.$('accountLoginDialog').open, true); assert.equal(page.$('accountLoginError').textContent, text);
+          assert.equal(page.$('accountLoginCode').value, code);
+        }
+      }
+      const complete = page.$('accountLoginForm').fire('submit'); await page.flush();
+      assert.equal(page.requests[0].url, '/relaycrew/accounts/login/complete'); assert.deepEqual(JSON.parse(page.requests[0].init.body), { id: login.id, code });
+      await page.answer(200, { ok: true, applied: true, account: ownAccount() });
+      assert.equal(page.requests[0].url, '/relaycrew/accounts'); await page.answer(200, { accounts: [ownAccount()] }); await complete;
+      assert.equal(page.$('accountLoginDialog').open, false); assert.equal(page.$('accountLoginCode').value, '');
+      assert.match(page.$('myAccountsContent').textContent, /Personal subscription/);
+    }
+  }
+});
+
+test('Grok polls complete sequentially on 202, stops on success, and ignores canceled in-flight completion', async () => {
+  const page = memberPage(); await page.answer(200, { accounts: [] });
+  async function startGrok() {
+    await page.$('accountAdd').fire('click'); page.$('accountLoginProvider').value = 'grok';
+    const start = page.$('accountLoginForm').fire('submit'); await page.flush();
+    await page.answer(201, { login: { id: 'device-login', provider: 'grok', paste: 'none', url: 'https://auth.x.ai/device', userCode: 'ABCD' } }); await start;
+  }
+  await startGrok();
+  for (let i = 0; i < 2; i++) {
+    assert.equal(page.requests.length, 1); assert.equal(page.requests[0].url, '/relaycrew/accounts/login/complete');
+    assert.deepEqual(JSON.parse(page.requests[0].init.body), { id: 'device-login' });
+    await page.answer(202, { ok: true, pending: true });
+    assert.equal(page.requests.length, 0); assert.equal(page.timers.size, 1);
+    assert.ok([...page.timers.values()][0].delay >= 1000); await page.tick();
+  }
+  await page.answer(200, { ok: true, applied: true }); await page.answer(200, { accounts: [ownAccount({ provider: 'grok' })] });
+  assert.equal(page.$('accountLoginDialog').open, false); assert.equal(page.timers.size, 0);
+  await startGrok(); const oldComplete = page.requests.shift();
+  await page.$('accountLoginCancel').fire('click'); await page.answer(200, { ok: true });
+  oldComplete.resolve({ status: 202, ok: true, json: async () => ({ ok: true, pending: true }) }); await page.flush();
+  assert.equal(page.$('accountLoginDialog').open, false); assert.equal(page.timers.size, 0); assert.equal(page.requests.length, 0);
+});
+
+test('owned account controls use stable IDs and removal confirmation; Team picker excludes another member’s private accounts', async () => {
+  const page = memberPage(); await page.answer(200, { accounts: [ownAccount()] });
+  const share = page.$('myAccountsContent').querySelectorAll('button').find(button => button.textContent === 'Share with the pool').fire('click'); await page.flush();
+  assert.equal(page.requests[0].url, '/relaycrew/accounts/update'); assert.deepEqual(JSON.parse(page.requests[0].init.body), { id: 'own-account', sharing: 'pool' });
+  await page.answer(200, { ok: true, applied: true }); await page.answer(200, { accounts: [ownAccount({ sharing: 'pool' })] }); await share;
+  await page.$('myAccountsContent').querySelectorAll('button').find(button => button.textContent === 'Remove').fire('click');
+  assert.equal(page.requests.length, 0); assert.equal(page.$('accountRemoveDialog').open, true);
+  const remove = page.$('accountRemoveConfirm').fire('click'); await page.flush();
+  assert.equal(page.requests[0].url, '/relaycrew/accounts/remove'); assert.deepEqual(JSON.parse(page.requests[0].init.body), { id: 'own-account' });
+  await page.answer(200, { ok: true, applied: true }); await page.answer(200, { accounts: [] }); await remove;
+  assert.equal(page.$('accountRemoveDialog').open, false);
+
+  const admin = boot({ locale: null }), accounts = [ownAccount(), ownAccount({ id: 'other-private', owner: 'other' }), ownAccount({ id: 'shared', owner: 'other', sharing: 'pool' })];
+  await admin.answer(200, { ...team(), accounts });
+  assert.match(admin.$('teamContent').textContent, /Owner.*Sharing/);
+  await admin.$('teamContent').querySelectorAll('button').find(button => button.textContent === 'Edit').fire('click');
+  assert.deepEqual(admin.$('memberAccounts').querySelectorAll('input').map(input => input.value), ['own-account', 'shared', 'account-id']);
+  await admin.navigate('accounts'); await admin.answer(200, { accounts });
+  const card = admin.document.createElement('div');
+  assert.equal(admin.window.RelayWorkspace.accountControls({ id: 'own-account', name: 'Personal subscription', provider: 'anthropic' }, card), true);
+  assert.match(card.textContent, /Owner: marina.*Sharing: Private/);
+  assert.deepEqual(card.querySelectorAll('button').map(button => button.textContent), ['Disable', 'Remove']);
+  const disable = card.querySelectorAll('button')[0].fire('click'); await admin.flush();
+  assert.equal(admin.requests[0].url, '/relaycrew/accounts/update'); assert.deepEqual(JSON.parse(admin.requests[0].init.body), { id: 'own-account', disabled: true });
+  await admin.answer(200, { ok: true, applied: true }); await admin.answer(200, { accounts: [ownAccount({ disabled: true })] }); await disable;
+
+  const fleet = boot({ locale: null, live: true, hash: '#accounts' });
+  const rows = [ownAccount(), ownAccount({ id: 'same-name', owner: 'other', sharing: 'pool' }), { id: 'operator', name: 'Operator account', provider: 'anthropic' }];
+  await fleet.answer(200, { ...fleet.status, accounts: rows.map(({ id, name, provider }) => ({ id, name, provider, type: 'oauth' })) });
+  await fleet.answer(200, { accounts: rows });
+  const cards = fleet.$('accounts').querySelectorAll('div.card');
+  assert.match(cards[0].textContent, /Owner: marina.*Sharing: Private/); assert.match(cards[1].textContent, /Owner: other.*Sharing: Pool/);
+  assert.ok(cards[2].querySelectorAll('button').some(button => button.textContent === 'prioritize'), 'operator controls are preserved');
+  const second = cards[1].querySelectorAll('button').find(button => button.textContent === 'Disable').fire('click'); await fleet.flush();
+  assert.equal(fleet.requests[0].url, '/relaycrew/accounts/update'); assert.deepEqual(JSON.parse(fleet.requests[0].init.body), { id: 'same-name', disabled: true });
+  await fleet.answer(200, { ok: true, applied: true }); await fleet.answer(200, { accounts: rows }); await second;
+  await fleet.answer(200, { ...fleet.status, accounts: [] });
 });
 
 test('browser team conflict refreshes revision without losing the edit draft', async () => {

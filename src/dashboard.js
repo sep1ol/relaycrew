@@ -932,6 +932,8 @@ ${WORKSPACE_HTML}
   var THEME_KEY = 'relaycrew-dashboard-theme';
   var POLL_MS = 5000;
   var timer = null;
+  var authEpoch = 0;
+  var memberKey = null;
   var lastStatus = null;
   var lastStatusAt = 0;
   var lastNote = null;
@@ -1048,7 +1050,8 @@ ${SHARED_HELPERS}
       head.appendChild(el('span', 'badge ' + badge.cls, badge.text));
     });
     // Last in the row so the badges sit in the same place on every card.
-    if (!isCurrent) {
+    var managed = window.RelayWorkspace && window.RelayWorkspace.accountControls(a, head);
+    if (!managed && !isCurrent) {
       var btn = el('button', 'act', t("switch"));
       btn.addEventListener('click', function () { doSwitch(a.name, cardNoteKey(a), btn); });
       head.appendChild(identify(btn, 'switch'));
@@ -1062,12 +1065,12 @@ ${SHARED_HELPERS}
     // last here is overwritten by that before any click can fire.
     // A control this key would be refused is not drawn at all; the line under
     // the actions says why, once (callerNotice).
-    if (callerCan(caller, '/relaycrew/disable')) {
+    if (!managed && callerCan(caller, '/relaycrew/disable')) {
       var ctlDisable = el('button', 'act', a.disabled ? t("enable") : t("disable"));
       ctlDisable.addEventListener('click', function () { doControlAccount(a.name, cardNoteKey(a), { disabled: !a.disabled }, ctlDisable); });
       head.appendChild(identify(ctlDisable, 'disable'));
     }
-    if (!a.disabled && callerCan(caller, '/relaycrew/priority')) {
+    if (!managed && !a.disabled && callerCan(caller, '/relaycrew/priority')) {
       var ctlFirst = el('button', 'act', t("prioritize"));
       ctlFirst.addEventListener('click', function () { doControlAccount(a.name, cardNoteKey(a), { place: 'first' }, ctlFirst); });
       head.appendChild(identify(ctlFirst, 'first'));
@@ -1565,6 +1568,9 @@ ${SHARED_HELPERS}
   }
 
   function showKeybox() {
+    authEpoch++; memberKey = null; lastStatus = null; lastNote = null; pollError = null; cardNotes = Object.create(null);
+    document.getElementById('note').textContent = ''; document.getElementById('err').style.display = 'none';
+    document.getElementById('callerText').textContent = ''; document.getElementById('caller').style.display = 'none';
     if (typeof window !== 'undefined' && window.RelayWorkspace) window.RelayWorkspace.signedOut();
     if (timer) { clearInterval(timer); timer = null; }
     document.getElementById('app').style.display = 'none';
@@ -1574,25 +1580,36 @@ ${SHARED_HELPERS}
 
   function poll() {
     var requestKey = localStorage.getItem(KEY) || '';
-    fetch('/relaycrew/status', { headers: { 'x-api-key': requestKey } })
+    var requestEpoch = authEpoch, member = false;
+    function currentAuth() { return requestEpoch === authEpoch && (localStorage.getItem(KEY) || '') === requestKey; }
+    function rejected() { showKeybox(); localStorage.removeItem(KEY); return null; }
+    function asMember() {
+      return fetch('/relaycrew/me', { headers: { 'x-api-key': requestKey }, cache: 'no-store' }).then(function (me) {
+        if (!currentAuth()) return null;
+        if (me.status === 401 || me.status === 403) return rejected();
+        if (!me.ok) throw new Error('status ' + me.status);
+        return me.json().then(function () { member = true; memberKey = requestKey; return { caller: { kind: 'member' } }; });
+      });
+    }
+    // A member key is refused /relaycrew/status, so once known it polls only /relaycrew/me.
+    (memberKey === requestKey ? asMember() : fetch('/relaycrew/status', { headers: { 'x-api-key': requestKey }, cache: 'no-store' })
       .then(function (res) {
-        if ((localStorage.getItem(KEY) || '') !== requestKey) return null;
-        // 403 is the loopback exemption refusing a key-less request (a Host
-        // that does not name this machine, e.g. behind a local reverse proxy
-        // that adds no forwarding headers). A valid key clears that gate too.
-        if (res.status === 401 || res.status === 403) { localStorage.removeItem(KEY); showKeybox(); return null; }
+        if (!currentAuth()) return null;
+        if (res.status === 401) return rejected();
+        if (res.status === 403) return asMember();
         if (!res.ok) throw new Error('status ' + res.status);
         return res.json();
-      })
+      }))
       .then(function (s) {
-        if (!s || (localStorage.getItem(KEY) || '') !== requestKey) return;
+        if (!s || !currentAuth()) return;
         document.getElementById('keybox').style.display = 'none';
         document.getElementById('app').style.display = '';
         document.getElementById('err').style.display = 'none'; pollError = null;
-        render(s);
+        if (member) { lastStatus = null; window.RelayWorkspace.update(s); }
+        else render(s);
       })
       .catch(function (e) {
-        if ((localStorage.getItem(KEY) || '') !== requestKey) return;
+        if (!currentAuth()) return;
         var err = document.getElementById('err');
         err.style.display = 'block';
         pollError = e.message; renderPollError();
@@ -1611,6 +1628,7 @@ ${SHARED_HELPERS}
   document.getElementById('go').addEventListener('click', function () {
     var v = document.getElementById('key').value.trim();
     if (!v) return;
+    showKeybox();
     localStorage.setItem(KEY, v);
     start();
   });
@@ -1658,7 +1676,7 @@ ${SHARED_HELPERS}
   document.getElementById('thrSet').addEventListener('click', function () { doThreshold(this); });
   // A client key is a valid key, so nothing else on the page would ever ask for
   // another one: the operator needs a way back to the key box.
-  document.getElementById('changeKey').addEventListener('click', function () { localStorage.removeItem(KEY); document.getElementById('key').value = ''; showKeybox(); });
+  document.getElementById('changeKey').addEventListener('click', function () { showKeybox(); localStorage.removeItem(KEY); document.getElementById('key').value = ''; });
   document.getElementById('thrVal').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') document.getElementById('thrSet').click();
   });
@@ -1671,7 +1689,10 @@ ${SHARED_HELPERS}
     });
   });
 
-  if (typeof window !== 'undefined' && window.RelayWorkspace) window.RelayWorkspace.refresh = poll;
+  if (typeof window !== 'undefined' && window.RelayWorkspace) {
+    window.RelayWorkspace.refresh = poll;
+    window.RelayWorkspace.renderAccounts = function () { if (lastStatus) render(lastStatus, true); };
+  }
 
   function renderPollError() {
     if (pollError !== null) document.getElementById('err').textContent = t('Could not connect to the gateway: {error}. Retrying automatically in 5 seconds.', { error: pollError });
