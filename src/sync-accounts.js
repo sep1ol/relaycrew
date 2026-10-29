@@ -96,6 +96,7 @@ export async function syncAccountsFromDisk(diskConfig, memConfig, accountManager
 
     const mgr = accountManager.accounts[mgrIdx];
     mgr.owner = diskAcct.owner ? { ...diskAcct.owner } : null;
+    mgr.disabledBy = diskAcct.disabledBy;
 
     // Backfill org identity and pick up renames/priority onto the running
     // account (e.g. after disk-side org disambiguation or a `priority` change).
@@ -175,6 +176,7 @@ export async function syncAccountsFromDisk(diskConfig, memConfig, accountManager
     // the same shape a hand edit produces.
     if (cfgAcct) {
       if (diskAcct.owner) cfgAcct.owner = { ...diskAcct.owner }; else delete cfgAcct.owner;
+      if (diskAcct.disabledBy) cfgAcct.disabledBy = diskAcct.disabledBy; else delete cfgAcct.disabledBy;
       if (diskAcct.upstream) cfgAcct.upstream = diskAcct.upstream; else delete cfgAcct.upstream;
       if (diskAcct.modelMap) cfgAcct.modelMap = diskAcct.modelMap; else delete cfgAcct.modelMap;
       if (diskAcct.stripRequestFields) cfgAcct.stripRequestFields = diskAcct.stripRequestFields; else delete cfgAcct.stripRequestFields;

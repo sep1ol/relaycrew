@@ -25,7 +25,7 @@ async function recordSignInWithCallback(entry, log) {
 }
 
 /** @param {Record<string, any>} account @param {UpsertOptions} opts @returns {Promise<UpsertResult>} */
-async function persistAccount(account, { owner = null, routing = null, storeRouting = false, name, log = () => {} }) {
+export async function persistAccount(account, { owner = null, routing = null, storeRouting = false, name, log = () => {} }) {
   /** @type {UpsertResult} */
   let outcome;
   /** @type {Record<string, any>} */
@@ -88,6 +88,11 @@ export async function upsertCodexAccount(creds, opts = {}) {
 
 /** @param {Record<string, any>} creds @param {UpsertOptions} [opts] @returns {Promise<UpsertResult>} */
 export async function upsertOAuthAccount(creds, opts = {}) {
+  return persistAccount(await identifyOAuthAccount(creds, opts), opts);
+}
+
+/** @param {Record<string, any>} creds @param {UpsertOptions} [opts] @returns {Promise<Record<string, any>>} */
+export async function identifyOAuthAccount(creds, opts = {}) {
   const { name, owner = null, routing = null, log = () => {} } = opts;
   const identified = await profileForCredentials(creds, routing, {
     renew: c => refreshOutsideProxy({
@@ -110,7 +115,7 @@ export async function upsertOAuthAccount(creds, opts = {}) {
     const tier = profile.hasClaudeMax ? 'Max' : profile.hasClaudePro ? 'Pro' : null;
     if (tier) log(`Detected Claude ${tier} account: ${profile.email}`);
   }
-  return persistAccount({
+  return {
     name: name || profile?.email, type: 'oauth', source: opts.source ?? 'login',
     ...oauthIdentityFields(profile),
     organizationType: profile?.organizationType || null,
@@ -118,5 +123,5 @@ export async function upsertOAuthAccount(creds, opts = {}) {
     seatTier: profile?.seatTier || null,
     hasClaudeMax: profile?.hasClaudeMax ?? null, hasClaudePro: profile?.hasClaudePro ?? null,
     accessToken: creds.accessToken, refreshToken: creds.refreshToken, expiresAt: creds.expiresAt,
-  }, opts);
+  };
 }

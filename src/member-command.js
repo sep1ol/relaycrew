@@ -91,7 +91,7 @@ export async function memberCommand(args, { client = null, input = process.stdin
       const { accounts } = await client.accounts();
       if (!accounts.length) { print('No accounts. Add one with relaycrew member login --claude --private.'); return; }
       print('ID\tPROVIDER\tNAME\tSHARING\tSTATE');
-      for (const account of accounts) print([account.id, account.provider, account.name, account.sharing, account.disabled ? 'disabled' : 'active'].map(value => safeLine(value, 200)).join('\t'));
+      for (const account of accounts) print([account.id, account.provider, account.name, account.sharing, account.disabled ? (account.disabledBy === 'admin' ? 'disabled by admin' : 'disabled') : 'active'].map(value => safeLine(value, 200)).join('\t'));
       return;
     }
     if (command.action === 'login') {

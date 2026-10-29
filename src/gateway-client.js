@@ -36,13 +36,13 @@ export class GatewayClient {
     this.timeoutMs = timeoutMs;
   }
 
-  /** @param {string} path @param {Record<string, any>} [body] */
-  async call(path, body) {
+  /** @param {string} path @param {Record<string, any>} [body] @param {number} [timeoutMs] */
+  async call(path, body, timeoutMs = this.timeoutMs) {
     const response = await this.fetch(`${this.baseUrl}/relaycrew/${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       headers: { 'x-api-key': this.key, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      redirect: 'manual', signal: AbortSignal.timeout(this.timeoutMs),
+      redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel();
@@ -64,7 +64,7 @@ export class GatewayClient {
   /** @param {import('./member-logins.js').LoginProvider} provider @param {import('./owned-accounts.js').Sharing} sharing */
   startLogin(provider, sharing) { return this.call('accounts/login', { provider, sharing }); }
   /** @param {string} id @param {string} text */
-  completeLogin(id, text) { return this.call('accounts/login/complete', { id, code: text }); }
+  completeLogin(id, text) { return this.call('accounts/login/complete', { id, code: text }, 15 * 60_000); }
   /** @param {string} id */
   cancelLogin(id) { return this.call('accounts/login/cancel', { id }); }
   /** @param {string} id @param {{disabled?: boolean, sharing?: import('./owned-accounts.js').Sharing}} patch */

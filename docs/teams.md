@@ -418,7 +418,7 @@ npx github:sep1ol/relaycrew member enable <account-id>
 npx github:sep1ol/relaycrew member remove <account-id>
 ```
 
-Members see only their own rows. Administrators can list all rows with the same `member accounts` command and the administrator key. They see each owner and sharing setting through the account and team APIs. They can disable, remove or change sharing on owned rows, but cannot route to private accounts. Owned credentials are excluded from callback.net sync. A provider account already held by another owner cannot be added again.
+Members see only their own rows. Administrators can list all rows with the same `member accounts` command and the administrator key. They see each owner and sharing setting through the account and team APIs. They can disable, enable or remove owned rows, but cannot route to private accounts. Only the owner can change sharing, and an owner cannot undo an administrator's disable. Owned credentials are excluded from callback.net sync. A provider account already held by another owner cannot be added again.
 
 Revoke members with `relaycrew team revoke <name>`. Do not hand-delete member entries or reuse their names: ownership follows the permanent member name. Revocation keeps that attribution so an administrator can manage the remaining rows.
 

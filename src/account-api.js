@@ -4,7 +4,7 @@ import { canonicalControlUrl } from './brand.js';
 import { teamAccessFor, teamIdentityValid } from './team-access.js';
 import { serializeMutation, teamJson } from './team-api.js';
 import { AccountActionError, accountView, accountViews, applyAccountAction, validateSharing } from './owned-accounts.js';
-import { upsertOAuthAccount, upsertCodexAccount } from './account-upsert.js';
+import { identifyOAuthAccount, persistAccount, upsertCodexAccount } from './account-upsert.js';
 
 /** @param {any} req @param {(req: any) => Promise<string|Buffer>} readBody @param {string[]} fields */
 async function accountBody(req, readBody, fields) {
@@ -91,9 +91,10 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
         if (error instanceof AccountActionError) throw error;
         throw new AccountActionError('The provider refused the code. Start a new login.', 502);
       }
+      const opts = { owner: pending.owner, source: /** @type {const} */ ('login') };
+      const account = pending.provider === 'claude' ? await identifyOAuthAccount(creds, opts) : null;
       change = async () => {
-        const upsert = pending.provider === 'claude' ? upsertOAuthAccount : upsertCodexAccount;
-        const outcome = await upsert(creds, { owner: pending.owner, source: 'login' });
+        const outcome = account ? await persistAccount(account, opts) : await upsertCodexAccount(creds, opts);
         const disk = await loadConfigPersistingIds();
         return { action: outcome.action, account: accountView(disk.accounts.find(row => row.id === outcome.id)) };
       };

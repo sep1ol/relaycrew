@@ -690,6 +690,7 @@ async function serverCommand() {
   const mergeAccountsOnto = (/** @type {Record<string, any>} */ diskConfig) => {
     diskConfig.accounts = mergeAccountsForSave(
       config.accounts, accountManager.accounts, diskConfig.accounts, removedAccountIds(config),
+      diskConfig.proxy?.teamMode === true,
     );
     // The written list omits them, so they are gone from disk too and there
     // is nothing left to re-adopt. Holding the ids any longer would only

@@ -7,6 +7,7 @@ import { resolveUpstreamProxy, setUpstreamProxy } from './upstream-proxy.js';
 import { ensureAccountIds, accountIdsComplete } from './account-id.js';
 import { envVar, NAME, LEGACY_NAMES } from './brand.js';
 import { validateTeamConfig } from './team-access.js';
+import { pinAccountPolicy } from './owned-accounts.js';
 
 export function getConfigPath() {
   const fromEnv = envVar('CONFIG');
@@ -319,9 +320,7 @@ export async function saveConfig(config) {
       snapshot.accounts = config.accounts.map(row => {
         const current = row.id ? rows.get(row.id) : null;
         if (!current) return row;
-        const pinned = { ...row };
-        if (current.owner) pinned.owner = { ...current.owner }; else delete pinned.owner;
-        return pinned;
+        return pinAccountPolicy(row, current);
       });
     }
     await writeJsonAtomic(path, snapshot);

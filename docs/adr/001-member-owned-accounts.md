@@ -25,7 +25,7 @@ Three facts in the code shape the decision:
    - `private`: only the owner's key routes to it. Other members never do, whatever their grant says, and the administrator key does not route to it either. The administrator still manages it.
    - `pool`: normal grants apply. Members with `"*"` use it immediately. Members with an ID list use it only after the administrator adds its ID.
    - The owner always routes to their own account, even when their grant is an ID list that omits it.
-4. **Management:** the owner and the administrator may disable, enable or remove an owned account. Only the owner switches `private` and `pool`, so nobody else can share a member's personal subscription. Operator rows have no sharing setting. A member can never see or touch rows they do not own.
+4. **Management:** the owner and the administrator may disable, enable or remove an owned account. An administrator's disable records `disabledBy: "admin"` and only an administrator may re-enable that row, clearing both `disabled` and `disabledBy`. Only the owner switches `private` and `pool`, so nobody else can share a member's personal subscription. Operator rows have no sharing setting and are removed with `relaycrew remove`, not the HTTP API. A member can never see or touch rows they do not own.
 5. **One row per provider account.** A sign-in that matches a row owned by someone else (another member, or the operator) is refused with 409 and changes nothing. A sign-in that matches the same owner's row refreshes its tokens and keeps its ID, name, sharing and disabled state.
 6. **Disabling, removing or making private revokes live traffic:** the change is saved, the gateway reloads, and `TeamAccess.refresh()` aborts requests that are no longer allowed, including requests on a disabled account. Reload marks a removed live account disabled before dropping it, so active requests retaining that object are also aborted.
 7. **Owned credentials stay on the gateway.** They are never pushed to callback.net credential sync.
@@ -38,12 +38,12 @@ All routes are team-mode only, authenticated with the member or administrator ke
 
 | Route | Who | Body | Result |
 |---|---|---|---|
-| `GET /relaycrew/accounts` | member, admin | | member: own rows; admin: all rows. Each `{id, name, provider, owner, sharing, disabled}` |
+| `GET /relaycrew/accounts` | member, admin | | member: own rows; admin: all rows. Each `{id, name, provider, owner, sharing, disabled, disabledBy?}` |
 | `POST /relaycrew/accounts/login` | member, admin | `{provider: "claude"\|"codex", sharing: "private"\|"pool"}` | 201 `{login: {id, provider, paste, url, expiresAt}}` |
 | `POST /relaycrew/accounts/login/complete` | the member or admin who started it | `{id, code}` | 200 `{action, account}`; 400 unusable paste (login stays open); 404 unknown or expired; 409 owned by someone else; 502 provider refused |
 | `POST /relaycrew/accounts/login/cancel` | the member or admin who started it | `{id}` | 200 |
-| `POST /relaycrew/accounts/update` | owner, admin | `{id, disabled?, sharing?}` | 200 `{account}`; 403 not yours; `sharing` only by the owner (403 for the administrator, 400 on operator rows) |
-| `POST /relaycrew/accounts/remove` | owner, admin | `{id}` | 200 `{removed}`; 403 not yours |
+| `POST /relaycrew/accounts/update` | owner, admin | `{id, disabled?, sharing?}` | 200 `{account}`; 403 not yours or owner enabling an administrator-disabled row; `sharing` only by the owner (403 for the administrator, 400 on operator rows) |
+| `POST /relaycrew/accounts/remove` | owner, admin | `{id}` | 200 `{removed}`; 403 not yours; 400 operator row (use `relaycrew remove`) |
 
 A member gets 403 for an unknown ID too, so IDs cannot be probed. An administrator completing a login creates an operator row.
 
