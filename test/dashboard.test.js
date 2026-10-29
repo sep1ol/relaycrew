@@ -778,6 +778,10 @@ for (const status of [401, 403]) {
     const page = bootPage({ storedKey: 'tc-stale' });
     assert.equal(page.requests[0].init.headers['x-api-key'], 'tc-stale');
     await page.answer(status);
+    if (status === 403) {
+      assert.equal(page.requests[0].url, '/relaycrew/me', 'a 403 probes for a member key before giving up');
+      await page.answer(403);
+    }
     assert.equal(page.byId('keybox').style.display, 'block');
     assert.equal(page.byId('app').style.display, 'none');
     assert.equal(page.store.size, 0);
