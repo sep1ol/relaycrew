@@ -2,7 +2,7 @@
 
 Start the gateway, then open `/dashboard` on its origin. For a local installation the default address is `http://localhost:3456/dashboard`. `relaycrew dashboard` opens it in your browser. Use HTTPS or an SSH tunnel when connecting to a VPS.
 
-The page itself is public and contains no account data. Requests for data and controls use the gateway's authentication rules. In team mode use the administrator key. Team management and usage history always require that key, including on localhost. Member keys cannot inspect the fleet or manage another member.
+The page itself is public and contains no account data. Requests for data and controls use the gateway's authentication rules. In team mode, sign in with your member key for your own accounts or the administrator key for fleet management. Team management and usage history always require the administrator key, including on localhost. Member keys cannot inspect the fleet or manage another member.
 
 ## Workspace views
 
@@ -25,15 +25,21 @@ The workspace frame fits inside the viewport with padding on every side. The mai
 
 ## Manage team access
 
-Enable team mode with `relaycrew team init` before adding members. Provider sign-in still runs on the gateway through `relaycrew login`; provider credentials never need to reach a developer's browser.
+Enable team mode with `relaycrew team init` before adding members. Operators can connect provider accounts on the gateway through `relaycrew login`; members can use the self-service flow below.
 
-Choose explicit stable account IDs or deliberately grant all current and future accounts. Member names identify usage and stay immutable. A member can have no account grants, which denies inference until grants are assigned.
+Choose explicit stable account IDs or deliberately grant all current and future accounts. Member names identify usage and stay immutable. With no account grants, a member can use only their own accounts.
 
 A created or rotated key appears only in its mutation response and the one-time reveal dialog. Copy it before closing the dialog and distribute it privately. Normal listings never return the key. Revocation, rotation and grant removal refresh the live access policy and cancel affected in-flight requests.
 
 Changes use an optimistic revision and the shared configuration lock. If someone else changes the team, refresh and review the latest policy before saving your draft again. A stale whole-configuration save cannot restore older team keys or grants. A busy live writer causes the write to fail instead of proceeding without its lock.
 
 A successful response distinguishes `saved` from `applied`. If the configuration was saved but a runtime reload failed, the response retains any newly issued key and explains that a reload is required. Do not retry key issuance just because the reload failed.
+
+## Member self-service
+
+Sign in with your member key to open **My accounts**, which lists only accounts you own. Choose **Add my account**, a provider (Claude, ChatGPT/Codex, or Grok), and sharing: **Private** allows only your key; **Pool** follows the team's account grants. For Claude, paste the code shown after sign-in. For ChatGPT/Codex, paste the full address of the final localhost page, even though that page does not load. For Grok, open the link and confirm the displayed code; the dialog waits until confirmation. Cancel stops a pending sign-in. Grok requires a gateway version that supports it.
+
+You can enable, disable, change sharing, or remove your accounts. An account disabled by an administrator can only be re-enabled by an administrator. Administrators see Owner and Sharing in Accounts and Team and can enable, disable, or remove member-owned accounts; only the owner can change sharing. Private accounts owned by other members are excluded from the Team editor's account picker. Removing an account requires confirmation and interrupts its traffic. Before pooling a Grok subscription, check its Auto Top-up setting: shared usage may spend your prepaid credits.
 
 ## Read historical distributions
 
