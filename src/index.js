@@ -12,16 +12,14 @@ import { validateAdaptiveConfig } from './adaptive-distribution.js';
 import { createProxyServer, reloadedHeaderFlags } from './server.js';
 import { teamAccessFor } from './team-access.js';
 import { teamCommand } from './team-command.js';
-import { importCredentials, loginOAuth, loginOAuthWithPastedCode, startOAuthLogin, fetchProfile, profileForCredentials, refreshAccessToken, isTokenExpired, isTokenExpiringSoon } from './oauth.js';
+import { memberCommand } from './member-command.js';
+import { MemberLogins } from './member-logins.js';
+import { upsertOAuthAccount, upsertCodexAccount } from './account-upsert.js';
+import { importCredentials, loginOAuth, loginOAuthWithPastedCode, startOAuthLogin, fetchProfile, refreshAccessToken, isTokenExpired, isTokenExpiringSoon } from './oauth.js';
 import {
   sameIdentity,
   orgKey,
   matchAccounts,
-  findUpsertTarget,
-  updateAccountEntry,
-  canUpsertOAuthAccount,
-  isTokenRejection,
-  oauthIdentityFields,
 } from './identity.js';
 import { resolveAccounts } from './resolve-accounts.js';
 import { loginCodex, startCodexLogin } from './codex-auth.js';
@@ -67,20 +65,6 @@ let activeCredentialSync = null;
 /** A sync over the config alone, for a command running outside the server. */
 function standaloneCredentialSync() {
   return activeCredentialSync || new CredentialSync({ accountManager: /** @type {any} */ ({ accounts: [], updateAccountTokens() {} }), addAccount: () => null, log: () => {} });
-}
-
-/**
- * An explicit sign-in (`login`, `import`): store the entry's tokens, over a
- * tombstone included, when this install is signed in to callback.net. Never
- * fatal — the account is in the config either way, and its next renewal stores it.
- * @param {Record<string, any>} entry
- */
-async function recordSignInWithCallback(entry) {
-  try {
-    if (await standaloneCredentialSync().storeSignIn(entry)) console.log('Stored on callback.net for your other installs.');
-  } catch (/** @type {any} */ err) {
-    console.error(`Could not store the sign-in on callback.net (${err?.message || err}); its next renewal will.`);
-  }
 }
 
 /**
@@ -178,6 +162,11 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 switch (command) {
+  case 'member':
+    try { await memberCommand(args.slice(1)); }
+    catch (error) { console.error(sanitizeText(error?.message || error)); process.exitCode = 1; }
+    process.exit(process.exitCode || 0);
+    break;
   case 'team':
     await teamCommand(args.slice(1));
     process.exit(process.exitCode || 0);
@@ -189,12 +178,14 @@ switch (command) {
     await runCommand();
     break;
   case 'import':
-    await importCommand();
-    process.exit(0);
+    try { await importCommand(); }
+    catch (error) { console.error(sanitizeText(error?.message || error)); process.exitCode = 1; }
+    process.exit(process.exitCode || 0);
     break;
   case 'login':
-    await loginCommand();
-    process.exit(0);
+    try { await loginCommand(); }
+    catch (error) { console.error(sanitizeText(error?.message || error)); process.exitCode = 1; }
+    process.exit(process.exitCode || 0);
     break;
   case 'env':
     await envCommand();
@@ -699,6 +690,7 @@ async function serverCommand() {
   const mergeAccountsOnto = (/** @type {Record<string, any>} */ diskConfig) => {
     diskConfig.accounts = mergeAccountsForSave(
       config.accounts, accountManager.accounts, diskConfig.accounts, removedAccountIds(config),
+      diskConfig.proxy?.teamMode === true,
     );
     // The written list omits them, so they are gone from disk too and there
     // is nothing left to re-adopt. Holding the ids any longer would only
@@ -759,12 +751,12 @@ async function serverCommand() {
           const flow = await startCodexLogin({ signal, timeoutMs: PANEL_LOGIN_TIMEOUT_MS });
           if (!remote && !signal?.aborted) openBrowser(flow.url);
           onPrompt?.({ provider: 'codex', url: flow.url, remote, listening: flow.listening, note: flow.listenError?.message ?? null, submit: flow.submit });
-          outcome = await upsertCodexAccount(undefined, await flow.credentials, null, false);
+          outcome = await upsertCodexAccount(await flow.credentials, { log: console.log });
         } else {
           const flow = await startOAuthLogin({ loopback: !remote, signal, timeoutMs: PANEL_LOGIN_TIMEOUT_MS });
           if (flow.browserUrl && !signal?.aborted) openBrowser(flow.browserUrl);
           onPrompt?.({ provider: 'claude', url: flow.url, remote, listening: Boolean(flow.browserUrl), note: null, submit: flow.submit });
-          outcome = await upsertOAuthAccount(undefined, await flow.tokens, 'login', null, false, { fatal: false, notify: false });
+          outcome = await upsertOAuthAccount(await flow.tokens, { log: console.log });
         }
         await reloadAccounts();
         return outcome;
@@ -932,7 +924,8 @@ async function serverCommand() {
   if (existsSync(caCertPath()) && !(await isProxyUp(port).catch(() => true))) {
     await ensureCerts(mitmHosts(config)).catch((err) => console.error(`[RelayCrew] Could not renew the MITM certificate: ${err.message}`));
   }
-  const server = createProxyServer(accountManager, config, hooks, sx, clientUsage, dimensionUsage, { bindHost });
+  const logins = new MemberLogins();
+  const server = createProxyServer(accountManager, config, hooks, sx, clientUsage, dimensionUsage, { bindHost, logins });
   // Catch bind-time errors (e.g. EADDRINUSE) only. Once the socket is bound we
   // remove this handler so a later runtime 'error' isn't misreported as a
   // listen failure and exit the whole proxy.
@@ -1115,7 +1108,8 @@ async function importCommand() {
     }
   }
 
-  await upsertOAuthAccount(name, creds, 'import', routing, store);
+  await upsertOAuthAccount(creds, { name, source: 'import', routing, storeRouting: store, log: console.log });
+  await notifyRunningServer(await loadConfig());
 }
 
 // ── login ───────────────────────────────────────────────────
@@ -1217,23 +1211,6 @@ async function requireWorkingRouting(routing, upstreamUrl) {
 }
 
 /**
- * Say so when a sign-in turned out to belong to an account with its own
- * routing and did not go through it. Which account a sign-in is for is only
- * known once it has happened, so without --name or --routing this cannot be
- * prevented, only reported. The operator who routes an account to keep its
- * traffic off this machine's address needs to know that it was not.
- * @param {Record<string, any>} entry  the existing entry the sign-in matched
- * @param {import('./account-routing.js').RoutingProxy|null} used
- */
-function noteUnusedRouting(entry, used) {
-  const own = accountRouting(entry);
-  if (!own || used) return;
-  console.log(`Note: "${entry.name}" has its own routing (${describeRouting(own)}), and this sign-in did not use it:`);
-  console.log('      the account was only identified after signing in. Its requests are still routed.');
-  console.log(`      To route the sign-in too, pass: --name "${entry.name}"`);
-}
-
-/**
  * `relaycrew login --codex` — browser OAuth against OpenAI, then store the
  * account.
  *
@@ -1267,75 +1244,8 @@ async function loginCodexCommand() {
     process.exit(1);
   }
 
-  await upsertCodexAccount(argValue('--name'), creds, routing, store);
+  await upsertCodexAccount(creds, { name: argValue('--name'), routing, storeRouting: store, log: console.log });
   await notifyRunningServer(await loadConfig());
-}
-
-/**
- * Store a Codex login: refresh the row for the same ChatGPT account, or add one.
- *
- * The browser flow that produced `creds` can take minutes, and a running server
- * may have rotated another account's refresh token on disk in the meantime.
- * Writing a copy loaded before the flow would put the dead token back, and that
- * account would fail on its next restart. So the upsert runs against a fresh
- * read of the file, and only this account's row is touched.
- *
- * @param {string | null | undefined} requestedName
- * @param {any} creds
- * @param {import('./account-routing.js').RoutingProxy|null} [routing] - the
- * account's own egress proxy (see loginRouting); null leaves it on the fleet path.
- * @param {boolean} [storeRouting] - false when `routing` was borrowed from the
- * existing entry rather than given with --routing: used, never written. True
- * with a null `routing` is `--routing none`: the entry's routing is cleared.
- * @returns {Promise<{ action: 'updated' | 'added', name: string }>}
- */
-async function upsertCodexAccount(requestedName, creds, routing = null, storeRouting = false) {
-  /** @type {{ action: 'updated' | 'added', name: string }} */
-  let outcome = { action: 'added', name: requestedName || '' };
-  /** @type {Record<string, any>|null} */
-  let signedIn = null;
-  await atomicConfigUpdate(config => {
-    const name = requestedName || creds.email
-      || `codex-${config.accounts.filter(a => a.provider === 'codex').length + 1}`;
-
-    const account = {
-      name,
-      type: 'oauth',
-      provider: 'codex',
-      source: 'login',
-      accountId: creds.accountId,
-      userId: creds.userId,
-      accessToken: creds.accessToken,
-      refreshToken: creds.refreshToken,
-      expiresAt: creds.expiresAt,
-      // Key absent rather than null when --routing was not passed: on a
-      // re-login the spread below then keeps the routing the entry already
-      // had, instead of silently clearing it.
-      ...(routing && storeRouting ? { routing: routingToUrl(routing) } : {}),
-    };
-
-    // Identity for a Codex account is its ChatGPT account id and user id; fall
-    // back to the display name when upstream did not supply one.
-    const idx = config.accounts.findIndex(a => (
-      a.provider === 'codex' && (sameIdentity(a, account) || a.name === account.name)
-    ));
-    if (idx >= 0) {
-      const prev = config.accounts[idx];
-      config.accounts[idx] = { ...prev, ...account, name: prev.name };
-      outcome = { action: 'updated', name: prev.name };
-      if (storeRouting && !routing) delete config.accounts[idx].routing; // --routing none
-      console.log(`Updated account "${prev.name}"`);
-      if (!storeRouting) noteUnusedRouting(prev, routing);
-    } else {
-      config.accounts.push(account);
-      outcome = { action: 'added', name: account.name };
-      console.log(`Added account "${account.name}"${creds.planType ? ` (${creds.planType})` : ''}`);
-    }
-    signedIn = config.accounts[idx >= 0 ? idx : config.accounts.length - 1];
-  });
-  console.log(`Saved to ${getConfigPath()}`);
-  if (signedIn) await recordSignInWithCallback(signedIn);
-  return outcome;
 }
 
 async function loginCommand() {
@@ -1462,7 +1372,8 @@ async function loginOAuthCommand({ pasteOnly = false } = {}) {
     process.exit(1);
   }
 
-  await upsertOAuthAccount(name, creds, 'login', routing, store);
+  await upsertOAuthAccount(creds, { name, source: 'login', routing, storeRouting: store, log: console.log });
+  await notifyRunningServer(await loadConfig());
 }
 
 // ── env ─────────────────────────────────────────────────────
@@ -2897,6 +2808,8 @@ Commands:
                       switches account, R reloads config, q leaves it running
   dashboard           Open the web dashboard of a running server in the browser
   accounts            List configured accounts
+  member <sub>        Manage your accounts on a team gateway: login, accounts,
+                      disable, enable, share, remove (member --help for options)
   switch [NAME]       Make the running server prefer one account (as 's' in the
                       TUI does); with no NAME, list accounts and mark the current
                       --session [ID] moves only that session ($CLAUDE_CODE_SESSION_ID
@@ -3045,143 +2958,6 @@ Crash log: ${getCrashLogPath()} (server; written when the process dies unexpecte
 /** Short human label for an account's organization, for disambiguating names. */
 function orgLabel(a) {
   return a.orgName || (a.orgUuid ? a.orgUuid.slice(0, 8) : 'org');
-}
-
-/**
- * @param {string | null | undefined} name
- * @param {Record<string, any>} creds
- * @param {string} [source]
- * @param {import('./account-routing.js').RoutingProxy|null} [routing] - the
- * account's own egress proxy (see loginRouting). The profile lookup below (and
- * the token refresh it may need first) is already that account's traffic, so
- * it goes the same way; null leaves every call on the fleet path.
- * @param {boolean} [storeRouting] - false when `routing` was borrowed from the
- * existing entry rather than given with --routing: used, never written. True
- * with a null `routing` is `--routing none`: the entry's routing is cleared.
- * @param {{ fatal?: boolean, notify?: boolean }} [opts] The CLI exits on an
- *   unidentifiable account and pokes a running server afterwards. The TUI's
- *   login runs INSIDE that server: it must survive a failed login (`fatal:
- *   false` throws instead) and reloads itself rather than over HTTP.
- * @returns {Promise<{ action: 'updated' | 'added', name: string }>}
- */
-async function upsertOAuthAccount(name, creds, source = 'unknown', routing = null, storeRouting = false, { fatal = true, notify = true } = {}) {
-  // Fetch profile to auto-name and deduplicate by account+org identity. A
-  // credentials file is routinely past its access token's hour while its
-  // refresh token is still good, so a stale token is renewed first and the
-  // renewed pair is what gets saved below — `creds` is the set to write.
-  const userNamed = !!name;
-  // The refresh goes through the callback.net lock when this install is
-  // signed in there: the token being imported may be one the store holds, and
-  // so one other installs hold too.
-  const identified = await profileForCredentials(creds, routing, {
-    renew: (c) => refreshOutsideProxy({ name: name || 'imported account', type: 'oauth', accessToken: c.accessToken, refreshToken: c.refreshToken, expiresAt: c.expiresAt }, (o) => refreshAccessToken(c.refreshToken, undefined, routing, o), { force: true })
-      .then((t) => t ?? Promise.reject(new Error('token not renewed'))),
-  });
-  creds = identified.creds;
-  const profile = identified.profile;
-  const profileOk = profile && !profile.error;
-
-  if (!canUpsertOAuthAccount(profile, userNamed)) {
-    // The profile error quotes the upstream's response body: one plain line.
-    const why = `Could not identify OAuth account — ${profile?.error ? sanitizeText(profile.error) : 'profile unavailable'}`;
-    // --name is the documented way past a profile the proxy could not read, but
-    // it is not a way past a token the upstream refused: suggesting it there
-    // would be pointing at the one door this no longer opens.
-    const advice = isTokenRejection(profile)
-      ? 'The upstream rejected this token and it could not be refreshed. Run `relaycrew login` to get a fresh one.'
-      : 'Retry with valid credentials, or pass --name to add the account without profile detection.';
-    // The TUI shows one line per event, so the advice rides along in the message.
-    if (!fatal) throw new Error(`${why}. ${advice}`);
-    console.error(why);
-    console.error(advice);
-    process.exit(1);
-  }
-
-  if (!profileOk) {
-    console.error(`Warning: importing named account without profile detection — ${profile?.error ? sanitizeText(profile.error) : 'profile unavailable'}`);
-  }
-  if (!name && profile?.email) {
-    name = profile.email;
-    const tier = profile.hasClaudeMax ? 'Max' : profile.hasClaudePro ? 'Pro' : null;
-    if (tier) console.log(`Detected Claude ${tier} account: ${profile.email}`);
-  }
-  // The login or import that produced `creds` ran between the caller's config
-  // load and this save — a browser flow can take minutes — and a running server
-  // may have rotated another account's refresh token on disk meanwhile. Saving
-  // a copy loaded before that would put the dead token back, and the account
-  // would fail on its next restart. So the whole upsert runs against a fresh
-  // read of the file: only this account's row (and, in the multi-org case, the
-  // display name of its namesakes) changes; every other row stays as it is on
-  // disk.
-  /** @type {{ action: 'updated' | 'added', name: string }} */
-  let outcome = { action: 'added', name: name || '' };
-  /** @type {Record<string, any>|null} */
-  let signedIn = null;
-  const config = await atomicConfigUpdate(config => {
-    if (!name) {
-      const n = config.accounts.filter(a => a.name.startsWith('account-')).length + 1;
-      name = `account-${n}`;
-    }
-
-    const account = {
-      name,
-      type: 'oauth',
-      source,
-      ...oauthIdentityFields(profile),
-      organizationType: profile?.organizationType || null,
-      rateLimitTier: profile?.rateLimitTier || creds.rateLimitTier || null,
-      seatTier: profile?.seatTier || null,
-      hasClaudeMax: profile?.hasClaudeMax ?? null,
-      hasClaudePro: profile?.hasClaudePro ?? null,
-      accessToken: creds.accessToken,
-      refreshToken: creds.refreshToken,
-      expiresAt: creds.expiresAt,
-      // Key absent rather than null when --routing was not passed: on a
-      // re-login updateAccountEntry spreads incoming over prev, so the routing
-      // the entry already had survives instead of being silently cleared.
-      ...(routing && storeRouting ? { routing: routingToUrl(routing) } : {}),
-    };
-
-    // Deduplicate by account+org identity (same email in a different org is a
-    // distinct account), then by name — but only where the name is not standing in
-    // for a different account+org, which is exactly the multi-org case below.
-    const idx = findUpsertTarget(config.accounts, account);
-
-    if (idx >= 0) {
-      // Same account+org: refresh credentials and org info, but keep the existing
-      // display name, entry id, and any disk-only fields (e.g. importFrom).
-      const prev = config.accounts[idx];
-      config.accounts[idx] = updateAccountEntry(prev, account);
-      outcome = { action: 'updated', name: prev.name };
-      if (storeRouting && !routing) delete config.accounts[idx].routing; // --routing none
-      console.log(`Updated account "${prev.name}"`);
-      if (!storeRouting) noteUnusedRouting(prev, routing);
-    } else {
-      // New org for this person: if another entry shares the accountUuid, the bare
-      // email name would collide — disambiguate both with " (org)".
-      if (!userNamed && account.accountUuid) {
-        const collisions = config.accounts.filter(
-          a => a.accountUuid === account.accountUuid && !sameIdentity(a, account)
-        );
-        if (collisions.length > 0) {
-          for (const c of collisions) {
-            if (!c.name.includes(' (')) c.name = `${c.name} (${orgLabel(c)})`;
-          }
-          account.name = `${name} (${orgLabel(account)})`;
-        }
-      }
-      config.accounts.push(account);
-      outcome = { action: 'added', name: account.name };
-      console.log(`Added account "${account.name}"`);
-    }
-    signedIn = config.accounts[idx >= 0 ? idx : config.accounts.length - 1];
-  });
-  console.log(`Saved to ${getConfigPath()}`);
-  // Before the server is told: its reload pass would otherwise read a tombstone
-  // for an account that was just signed in again and remove it.
-  if (signedIn) await recordSignInWithCallback(signedIn);
-  if (notify) await notifyRunningServer(config);
-  return outcome;
 }
 
 // ── config sync helpers ─────────────────────────────────────

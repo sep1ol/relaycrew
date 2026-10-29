@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { classificationPath } from './classification-path.js';
+import { canonicalControlUrl } from './brand.js';
 
 /** @typedef {{ kind: 'admin', fingerprint: string } | { kind: 'member', name: string, fingerprint: string }} TeamIdentity */
 /** @typedef {{ name: string, key: string, accounts: string[] | '*', maxConcurrent?: number, disabled?: boolean }} TeamMember */
@@ -75,6 +76,9 @@ export function teamAllowsAccount(proxy, identity, account) {
   if (proxy?.teamMode !== true) return identity == null;
   if (!teamIdentityValid(proxy, identity)) return false;
   if (!identity) return false;
+  const owner = account?.owner;
+  if (owner && identity.kind === 'member' && identity.name === owner.name) return true;
+  if (owner?.sharing === 'private') return false;
   if (identity.kind === 'admin') return true;
   const member = currentTeamMember(proxy, identity);
   return member !== null && (member.accounts === '*' || member.accounts.includes(account?.id));
@@ -101,6 +105,14 @@ export function teamInferencePath(method, url) {
   return method === 'GET' && ['/v1/models', '/models', '/backend-api/codex/models'].includes(path);
 }
 
+/** @param {string|undefined} method @param {string|undefined} url */
+export function teamMemberPath(method, url) {
+  const classified = classificationPath(url);
+  const path = canonicalControlUrl(classified) ?? classified;
+  if (method === 'GET') return path === '/relaycrew/accounts';
+  return method === 'POST' && ['login', 'login/complete', 'login/cancel', 'update', 'remove'].some(action => path === `/relaycrew/accounts/${action}`);
+}
+
 /** @param {{proxy?: TeamProxy}} config */
 export function teamAccessFor(config) {
   let controller = controllers.get(config);
@@ -122,7 +134,7 @@ class TeamAccess {
 
   refresh() {
     for (const request of this.requests) {
-      if (!request.valid() || (request.account && !request.allows(request.account))) request.abort.abort(new Error('Team access changed'));
+      if (!request.valid() || (request.account && (!request.allows(request.account) || request.account.disabled === true))) request.abort.abort(new Error('Team access changed'));
     }
   }
 

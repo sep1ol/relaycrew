@@ -197,6 +197,7 @@ export class Warmer {
    *    quota for nothing.
    */
   _isWarmCandidate(account) {
+    if (account.owner?.sharing === 'private') return false;
     if (!warmApplicable(account) || !account.credential) return false;
     if (account.disabled) return false;
     if (account.status === 'error' || account.status === 'exhausted' || account.status === 'throttled') return false;

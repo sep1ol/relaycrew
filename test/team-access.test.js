@@ -11,7 +11,7 @@ import { AccountManager } from '../src/account-manager.js';
 import { ClientUsageTracker } from '../src/client-usage.js';
 import { loadConfig } from '../src/config.js';
 import { createProxyServer, createProxyRequestListener } from '../src/server.js';
-import { authenticateTeam, validateTeamConfig, teamAccessFor } from '../src/team-access.js';
+import { authenticateTeam, validateTeamConfig, teamAccessFor, teamAllowsAccount, teamMemberPath } from '../src/team-access.js';
 
 const ADMIN = 'admin-secret';
 const ALICE = 'alice-secret';
@@ -599,4 +599,42 @@ test('Codex WebSocket inference reports HTTP fallback for members', async t => {
   ]);
   assert.match(reply, /^HTTP\/1.1 501 Not Implemented/);
   assert.equal(f.seen.length, 0);
+});
+
+test('owner access overrides grants while private accounts exclude every other identity', () => {
+  const proxy = teamProxy();
+  proxy.clientKeys = [
+    { name: 'owner', key: 'owner-key', accounts: [] },
+    { name: 'star', key: 'star-key', accounts: '*' },
+    { name: 'list', key: 'list-key', accounts: ['owned'] },
+    { name: 'omitted', key: 'omitted-key', accounts: [] },
+  ];
+  const identities = ['owner-key', 'star-key', 'list-key', 'omitted-key', ADMIN].map(key => authenticateTeam(proxy, key).identity);
+  for (const [owner, expected] of [
+    [null, [false, true, true, false, true]],
+    [{ name: 'owner', sharing: 'pool' }, [true, true, true, false, true]],
+    [{ name: 'owner', sharing: 'private' }, [true, false, false, false, false]],
+  ]) {
+    assert.deepEqual(identities.map(identity => teamAllowsAccount(proxy, identity, { id: 'owned', owner })), expected);
+  }
+  assert.equal(teamMemberPath('GET', '/relaycrew/accounts'), true);
+  assert.equal(teamMemberPath('POST', '/teamrouter/accounts/login/complete'), true);
+  for (const [method, path] of [['POST', '/relaycrew/accounts'], ['GET', '/relaycrew/accounts/login'], ['POST', '/relaycrew/accounts/anything'], ['GET', '/relaycrew/status']]) assert.equal(teamMemberPath(method, path), false);
+});
+
+test('access refresh aborts streams on disable and when a pooled account becomes private', () => {
+  for (const change of ['disabled', 'private']) {
+    const config = { proxy: teamProxy() };
+    config.proxy.clientKeys[0].accounts = '*';
+    const controller = teamAccessFor(config);
+    const res = new EventEmitter();
+    res.destroy = () => res.emit('close');
+    const access = controller.enter(authenticateTeam(config.proxy, ALICE).identity, res);
+    access.account = { id: 'owned', owner: { name: change === 'disabled' ? 'alice' : 'bob', sharing: 'pool' } };
+    if (change === 'disabled') access.account.disabled = true;
+    else access.account.owner.sharing = 'private';
+    controller.refresh();
+    assert.equal(access.signal.aborted, true, change);
+    assert.equal(controller.active.get('alice'), 0);
+  }
 });

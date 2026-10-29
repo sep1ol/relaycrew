@@ -23,6 +23,7 @@ import { safeLine } from './safe-text.js';
 import { forwardRefusal, guardedLookup, FORBIDDEN_FORWARD } from './forward-target.js';
 import { renderDashboardHtml, dashboardCsp } from './dashboard.js';
 import { handleTeamRequest } from './team-api.js';
+import { handleAccountRequest } from './account-api.js';
 import { httpClientKey, forwardedBearerToken } from './http-client-auth.js';
 import { handleUsageHistoryRequest } from './usage-history.js';
 import { createUsageRecorder, resolveUsageDimensions, usageDimensionHeaderNames } from './client-usage.js';
@@ -33,7 +34,7 @@ import { codexSpentWindows, isAccountWideCodexWindow } from './codex-quota.js';
 import { atomicConfigUpdate } from './config.js';
 import { ConfigOpError, setThreshold, thresholdRatio } from './config-ops.js';
 import { envVar, canonicalControlUrl, isControlPath } from './brand.js';
-import { authenticateTeam, validateTeamConfig, teamAccessFor, teamExclusions, teamError, teamInferencePath } from './team-access.js';
+import { authenticateTeam, validateTeamConfig, teamAccessFor, teamExclusions, teamError, teamInferencePath, teamMemberPath } from './team-access.js';
 /** @typedef {import('./types.js').CodedError} CodedError */
 
 
@@ -457,13 +458,13 @@ export function callerView(client) {
  * @param {any} [sx]
  * @param {any} [clientUsage]
  * @param {any} [dimensionUsage]
- * @param {{ bindHost?: string|null }} [opts]  `bindHost`: the address the caller
+ * @param {{ bindHost?: string|null, logins?: import('./member-logins.js').MemberLogins|null }} [opts]  `bindHost`: the address the caller
  *   binds, when it is not `config.proxy.host` (RELAYCREW_HOST overrides it). The
  *   DNS-rebinding Host check accepts that address as naming this machine; given
  *   only the config value, a server bound off-box through the env var refused a
  *   key-less caller naming the very address it listens on (#423).
  */
-export function createProxyServer(accountManager, config, hooks = {}, sx = null, clientUsage = null, dimensionUsage = null, { bindHost = null } = {}) {
+export function createProxyServer(accountManager, config, hooks = {}, sx = null, clientUsage = null, dimensionUsage = null, { bindHost = null, logins = null } = {}) {
   validateTeamConfig(config.proxy);
   const boundHost = () => bindHost || config.proxy?.host;
   const upstream = config.upstream || 'https://api.anthropic.com';
@@ -490,7 +491,7 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null,
       const canonicalUrl = canonicalControlUrl(req.url);
       if (canonicalUrl) req.url = canonicalUrl;
       const controlClass = classificationPath(req.url);
-      if (/^\/(?:relaycrew|teamclaude|teamrouter)\/(?:team(?:\/|$)|usage\/history$)/.test(controlClass)) res.setHeader('Cache-Control', 'no-store');
+      if (/^\/(?:relaycrew|teamclaude|teamrouter)\/(?:team(?:\/|$)|accounts(?:\/|$)|usage\/history$)/.test(controlClass)) res.setHeader('Cache-Control', 'no-store');
 
       // Dashboard page — served BEFORE the auth gate on purpose. The page is a
       // static asset containing no data: everything it shows comes from
@@ -542,8 +543,8 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null,
           res.end(JSON.stringify(teamAccessFor(config).status(req.tcTeamIdentity, clientUsage)));
           return;
         }
-        if (!teamInferencePath(req.method, req.url)) {
-          teamError(res, 403, 'Members may access inference endpoints and /relaycrew/me only');
+        if (!teamInferencePath(req.method, req.url) && !teamMemberPath(req.method, req.url)) {
+          teamError(res, 403, 'Members may access inference endpoints, /relaycrew/me and their account routes only');
           return;
         }
       }
@@ -634,6 +635,7 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null,
       }
 
       if (await handleTeamRequest(req, res, { config, hooks, clientUsage, readBody: readControlBody })) return;
+      if (await handleAccountRequest(req, res, { config, hooks, logins, readBody: readControlBody })) return;
       if (await handleUsageHistoryRequest(req, res, { config, clientUsage, dimensionUsage })) return;
 
       // Status endpoint

@@ -34,6 +34,7 @@ test('warms only healthy, idle Anthropic OAuth accounts with no live 5h window',
     oauth('third-party', { upstream: 'https://api.deepseek.com/anthropic' }), // ✗ not Anthropic
     oauth('disabled', { disabled: true }),           // ✗ disabled
     oauth('throttled'),                              // ✗ throttled
+    oauth('private', { owner: { name: 'alice', sharing: 'private' } }),
   ], 0.98);
   am.accounts[1].quota.unified5hReset = Date.now() + 3600_000; // 'active' has a live window
   am.accounts[4].status = 'throttled';

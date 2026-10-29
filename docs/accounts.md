@@ -2,6 +2,8 @@
 
 Adding, naming, and managing the accounts RelayCrew rotates between.
 
+In team mode, members can [add their own subscriptions](teams.md#members-add-their-own-accounts). These rows carry `owner: { "name": "alice", "sharing": "private" }` (or `"pool"`). Rows without `owner` belong to the operator. A login that matches another owner's provider account is refused. Signing in again as the same owner keeps the row's ID, name, sharing and disabled state.
+
 Choose a login method explicitly:
 
 | Command | Credential |

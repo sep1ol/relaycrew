@@ -121,7 +121,7 @@ function segment(/** @type {unknown} */ v) {
  * @param {Record<string, any>|null|undefined} a
  */
 export function isSyncable(a) {
-  if (!a || a.type !== 'oauth' || a.upstream) return false;
+  if (!a || a.owner || a.type !== 'oauth' || a.upstream) return false;
   return providerOf(a) === 'codex' ? !!a.accountId : !!a.accountUuid;
 }
 
@@ -505,6 +505,7 @@ export class CredentialSync {
    * @returns {Row|null}
    */
   _rowFor(account) {
+    if (account.owner) return null;
     const key = syncKeyFor(account);
     const byKey = key ? this.rows.get(key) : null;
     if (byKey) return byKey;
@@ -725,6 +726,7 @@ export class CredentialSync {
    * @returns {Promise<Tokens|null>}
    */
   async coordinateRefresh(account, refresh, { force = false } = {}) {
+    if (account.owner) return refresh();
     if (!await this.isSignedIn()) return refresh();
     const name = safeLine(account.name, 64);
     let row;

@@ -7,6 +7,7 @@ import { resolveUpstreamProxy, setUpstreamProxy } from './upstream-proxy.js';
 import { ensureAccountIds, accountIdsComplete } from './account-id.js';
 import { envVar, NAME, LEGACY_NAMES } from './brand.js';
 import { validateTeamConfig } from './team-access.js';
+import { pinAccountPolicy } from './owned-accounts.js';
 
 export function getConfigPath() {
   const fromEnv = envVar('CONFIG');
@@ -315,6 +316,12 @@ export async function saveConfig(config) {
     if (disk?.proxy?.teamMode === true) {
       snapshot = { ...config, proxy: { ...config.proxy } };
       for (const field of ['teamMode', 'apiKey', 'clientKeys', 'trustLoopback']) snapshot.proxy[field] = disk.proxy[field];
+      const rows = new Map((disk.accounts ?? []).map((/** @type {{id?: string}} */ row) => [row.id, row]));
+      snapshot.accounts = config.accounts.map((/** @type {Parameters<typeof pinAccountPolicy>[0]} */ row) => {
+        const current = row.id ? rows.get(row.id) : null;
+        if (!current) return row;
+        return pinAccountPolicy(row, current);
+      });
     }
     await writeJsonAtomic(path, snapshot);
   });

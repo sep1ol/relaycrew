@@ -15,6 +15,7 @@
 // credential, and it separates two entries that agree on everything else.
 
 import { sameIdentity, sameOrg } from './identity.js';
+import { pinAccountPolicy } from './owned-accounts.js';
 
 /**
  * The manager account built from config entry `acct`, or null if it has none.
@@ -204,7 +205,7 @@ function claimDiskRows(configAccounts, diskAccounts, removedIds) {
  * The config-to-disk lookup is a different axis from the config-to-manager one,
  * and claimDiskRows is where it is decided: one row per entry, one entry per row.
  */
-export function mergeAccountsForSave(configAccounts, managerAccounts, diskAccounts, removedIds = new Set()) {
+export function mergeAccountsForSave(configAccounts, managerAccounts, diskAccounts, removedIds = new Set(), teamMode = false) {
   // loadConfig normalises a missing list, but this is the function that threw
   // on one (#330), so it holds its own contract too: no rows is an empty list.
   if (!Array.isArray(diskAccounts)) diskAccounts = [];
@@ -219,7 +220,9 @@ export function mergeAccountsForSave(configAccounts, managerAccounts, diskAccoun
       expiresAt: am.expiresAt,
     } : a;
     const diskAcct = diskAccounts[rowFor.get(i)];
-    return diskAcct ? { ...diskAcct, ...live } : live;
+    if (!diskAcct) return live;
+    const row = { ...diskAcct, ...live };
+    return teamMode ? pinAccountPolicy(row, diskAcct) : row;
   });
 
   // Carry over rows that exist on disk and not in memory. The list used to be

@@ -224,6 +224,12 @@ test('a save keeps disk-only fields and the entry id', async () => {
 
   assert.equal(saved[0].importFrom, '~/.claude/.credentials.json', 'a disk-only field survives');
   assert.equal(saved[0].id, config[0].id, 'so the next start reads back the same id');
+
+  config[0].owner = { name: 'alice', sharing: 'pool' };
+  config[0].disabledBy = 'admin';
+  disk[0].owner = { name: 'alice', sharing: 'private' };
+  const pinned = mergeAccountsForSave(config, am.accounts, disk, new Set(), true)[0];
+  assert.deepEqual([pinned.owner, pinned.disabledBy], [disk[0].owner, undefined]);
 });
 
 test('an entry whose account is gone keeps its own credential on a save', async () => {

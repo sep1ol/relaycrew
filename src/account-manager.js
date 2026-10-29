@@ -336,6 +336,8 @@ function makeAccount(acct, index, listener = null) {
     // entries and is therefore a different shape — see account-pairing.js.
     id: acct.id || null,
     name: acct.name,
+    owner: acct.owner ? { ...acct.owner } : null,
+    disabledBy: acct.disabledBy,
     type: acct.type,
     // Which backend this account talks to. Absent means Anthropic, so configs
     // written before providers existed keep working untouched.
