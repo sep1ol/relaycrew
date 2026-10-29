@@ -8,13 +8,15 @@ An administrator runs `relaycrew team init`, imports provider credentials, lists
 
 ## Shape
 
-`proxy.apiKey` identifies the administrator. With `proxy.teamMode: true`, `proxy.clientKeys` contains members with unique names and credentials, explicit stable account grants, and a concurrency limit. The literal `"*"` grants all accounts, including future additions. An array grants only its listed IDs. An empty array grants none.
+`proxy.apiKey` identifies the administrator. With `proxy.teamMode: true`, `proxy.clientKeys` contains members with unique names and credentials, explicit stable account grants, and a concurrency limit. The literal `"*"` grants all operator and pool accounts, including future additions. An array grants its listed IDs, subject to the owner rule below. An empty array grants no accounts belonging to others.
 
 `team-access.js` owns validation, credential fingerprints, account authorization, member concurrency leases, and private status. The main HTTP listener authenticates each request. A MITM listener binds the authenticated credential fingerprint and checks current membership on every inner request. Rotating a key invalidates an old binding even when the member name is reused.
 
+The owner clause in `teamAllowsAccount` always admits the owner and excludes everyone else from private rows, including the administrator. Pool rows follow the usual grants. Owners and administrators manage rows through `/relaycrew/accounts` routes. `MemberLogins` keeps pending provider flows in memory for five minutes, bound to the actor's name and credential fingerprint. It allows one pending flow per actor and 32 in total. Restarting loses pending flows. See [ADR-001](adr/001-member-owned-accounts.md).
+
 The inference listener takes one lease before buffering the request. A lease lasts through retries and the complete response stream. Automatic account selection and failover receive a union of attempted accounts and currently denied accounts. Hard pins receive a separate authorization check. A final authorization callback runs after upstream admission and before opening the provider request. Reload cancels active requests whose credentials or selected-account grants have been revoked.
 
-Internal session IDs include a digest of member identity and the client session ID. Original client headers are preserved on the wire. Member status contains only that member's grants, concurrency, and usage. Fleet status, management MCP, mutations, blind tunnels, and WebSocket relays require the administrator credential. The dashboard HTML is public and contains no account data.
+Internal session IDs include a digest of member identity and the client session ID. Original client headers are preserved on the wire. Member status contains only that member's grants, concurrency, and usage. Fleet status, management MCP, team mutations, blind tunnels, and WebSocket relays require the administrator credential. The dashboard HTML is public and contains no account data.
 
 ## Synthesis decision
 

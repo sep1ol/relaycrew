@@ -315,6 +315,14 @@ export async function saveConfig(config) {
     if (disk?.proxy?.teamMode === true) {
       snapshot = { ...config, proxy: { ...config.proxy } };
       for (const field of ['teamMode', 'apiKey', 'clientKeys', 'trustLoopback']) snapshot.proxy[field] = disk.proxy[field];
+      const rows = new Map((disk.accounts ?? []).map(row => [row.id, row]));
+      snapshot.accounts = config.accounts.map(row => {
+        const current = row.id ? rows.get(row.id) : null;
+        if (!current) return row;
+        const pinned = { ...row };
+        if (current.owner) pinned.owner = { ...current.owner }; else delete pinned.owner;
+        return pinned;
+      });
     }
     await writeJsonAtomic(path, snapshot);
   });

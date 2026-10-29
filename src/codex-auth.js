@@ -338,7 +338,7 @@ export async function listenForCallback(port, expectedState) {
 /**
  * Start a Codex sign-in and hand back what finishing it needs.
  *
- * The listener on port 1455 is always tried, remote session or not: with
+ * The listener on port 1455 is tried unless `listen` is false: with
  * `ssh -L 1455:localhost:1455` a browser on the laptop reaches it and the
  * sign-in finishes by itself. Whether or not it is listening, `submit` takes
  * the address the browser was left on (see parseCodexCallback), and the first
@@ -351,15 +351,16 @@ export async function listenForCallback(port, expectedState) {
  * @param {AbortSignal | null} [opts.signal]  cancels the wait and closes the listener
  * @param {number} [opts.timeoutMs]
  * @param {number} [opts.port]  where to listen; tests only, as the redirect always names 1455
+ * @param {boolean} [opts.listen]  false for gateway logins completed by paste
  * @param {typeof exchangeCodexCode} [opts.exchange]  injectable so tests need no token endpoint
  */
-export async function startCodexLogin({ routing = null, signal = null, timeoutMs = LOGIN_TIMEOUT_MS, port = CALLBACK_PORT, exchange = exchangeCodexCode } = {}) {
+export async function startCodexLogin({ routing = null, signal = null, timeoutMs = LOGIN_TIMEOUT_MS, port = CALLBACK_PORT, listen = true, exchange = exchangeCodexCode } = {}) {
   const codeVerifier = randomBytes(32).toString('base64url');
   const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
   const state = randomBytes(32).toString('base64url');
   const url = buildCodexAuthUrl({ state, codeChallenge });
 
-  const { server, code, error } = await listenForCallback(port, state);
+  const { server, code, error } = listen ? await listenForCallback(port, state) : { server: null, code: null, error: null };
   const race = codeRace({
     listener: code,
     parse: text => parseCodexCallback(text, state),

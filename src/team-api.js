@@ -28,7 +28,7 @@ export function teamJson(res, status, body) {
 // reload itself reads/persists account IDs through that same lock.
 const mutations = new Map();
 /** @template T @param {()=>Promise<T>} run @returns {Promise<T>} */
-function serializeMutation(run) {
+export function serializeMutation(run) {
   const path = getConfigPath();
   const previous = mutations.get(path) ?? Promise.resolve();
   const result = previous.then(run, run);

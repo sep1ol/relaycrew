@@ -66,7 +66,7 @@ export function redactMember(member) {
 
 /** @param {Record<string, any>} config */
 export function teamAccounts(config) {
-  return (config.accounts ?? []).map((/** @type {Record<string, any>} */ account) => ({ id: account.id, name: account.name ?? '', provider: providerOf(account), disabled: account.disabled === true }));
+  return (config.accounts ?? []).map((/** @type {Record<string, any>} */ account) => ({ id: account.id, name: account.name ?? '', provider: providerOf(account), owner: account.owner?.name ?? null, sharing: account.owner?.sharing ?? 'operator', disabled: account.disabled === true }));
 }
 
 // HMAC makes the optimistic concurrency token opaque, including when only a
