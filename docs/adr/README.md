@@ -53,3 +53,4 @@ Each with the reason it was rejected.
 | ADR | Area | Title | Status |
 |---|---|---|---|
 | [001](001-member-owned-accounts.md) | Team | Members add their own provider accounts | accepted |
+| [002](002-grok-accounts.md) | Providers / Team | Grok subscription accounts | accepted |

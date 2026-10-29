@@ -59,8 +59,12 @@ export function sameOrg(a, b) {
  *   is correctly seen as a distinct account.
  * - Otherwise (API-key accounts, or no UUID yet): fall back to matching by name.
  */
+/** @param {Record<string, any>|null|undefined} a @param {Record<string, any>|null|undefined} b */
 export function sameIdentity(a, b) {
   if (providerOf(a) !== providerOf(b)) return false;
+  if (providerOf(a) === 'grok') {
+    return !!a?.userId && a.userId === b?.userId && (!a.teamId || !b.teamId || a.teamId === b.teamId);
+  }
   if (a?.accountId && b?.accountId) {
     return a.accountId === b.accountId && (!a.userId || !b.userId || a.userId === b.userId);
   }
@@ -77,8 +81,10 @@ export function sameIdentity(a, b) {
  * unknown UUID or org on either side means "cannot tell", never "different".
  * Two providers are the exception: separate plans, whoever holds them.
  */
+/** @param {Record<string, any>|null|undefined} a @param {Record<string, any>|null|undefined} b */
 export function distinctAccounts(a, b) {
   if (providerOf(a) !== providerOf(b)) return true;
+  if (providerOf(a) === 'grok') return !!a?.userId && !!b?.userId && !sameIdentity(a, b);
   if (a?.accountId && b?.accountId) {
     return a.accountId !== b.accountId || (!!a.userId && !!b.userId && a.userId !== b.userId);
   }
@@ -99,6 +105,7 @@ export function distinctAccounts(a, b) {
  * process that still holds it in memory restarts, which is what makes the loss
  * hard to trace back to the login that caused it.
  */
+/** @param {Array<Record<string, any>>} accounts @param {Record<string, any>} incoming */
 export function findUpsertTarget(accounts, incoming) {
   // A UUID match is evidence; a name match is a guess, and sameIdentity makes
   // both in one pass — it compares UUIDs only when BOTH records carry one and
@@ -116,6 +123,10 @@ export function findUpsertTarget(accounts, incoming) {
   // organization actually matched (#327). An entry with no organization ahead
   // of one that has it is a hand-added entry beside a logged-in one, or any
   // account before its first probe.
+  if (providerOf(incoming) === 'grok') {
+    const exact = accounts.findIndex(a => a.teamId && a.teamId === incoming.teamId && sameIdentity(a, incoming));
+    return exact >= 0 ? exact : accounts.findIndex(a => sameIdentity(a, incoming));
+  }
   if (incoming?.accountUuid) {
     const exact = accounts.findIndex(a => a?.accountUuid === incoming.accountUuid && sameOrg(a, incoming) === true);
     if (exact >= 0) return exact;

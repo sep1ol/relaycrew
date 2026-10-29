@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { upsertCodexAccount, upsertOAuthAccount } from '../src/account-upsert.js';
+import { upsertCodexAccount, upsertOAuthAccount, upsertGrokAccount } from '../src/account-upsert.js';
 import { setUpstreamProxy, resolveUpstreamProxy, resetUpstreamProxy } from '../src/upstream-proxy.js';
 
-for (const [provider, upsert] of [['codex', upsertCodexAccount], ['anthropic', upsertOAuthAccount]]) test(`${provider} upserts preserve the same owner and refuse a different owner without writing`, async t => {
+for (const [provider, upsert] of [['codex', upsertCodexAccount], ['anthropic', upsertOAuthAccount], ['grok', upsertGrokAccount]]) test(`${provider} upserts preserve the same owner and refuse a different owner without writing`, async t => {
   const dir = await mkdtemp(join(tmpdir(), 'relaycrew-upsert-'));
   const previous = process.env.RELAYCREW_CONFIG;
   const path = process.env.RELAYCREW_CONFIG = join(dir, 'config.json');
@@ -24,9 +24,9 @@ for (const [provider, upsert] of [['codex', upsertCodexAccount], ['anthropic', u
     await rm(dir, { recursive: true, force: true });
   });
   const owner = { name: 'alice', sharing: 'pool' };
-  const original = { id: 'stable', name: 'My account', type: 'oauth', provider, ...(provider === 'codex' ? { accountId: 'acct', userId: 'user' } : { accountUuid: 'acct', orgUuid: 'org' }), owner, disabled: true, accessToken: 'old' };
+  const original = { id: 'stable', name: 'My account', type: 'oauth', provider, ...(provider === 'grok' ? { userId: 'user', teamId: 'team' } : provider === 'codex' ? { accountId: 'acct', userId: 'user' } : { accountUuid: 'acct', orgUuid: 'org' }), owner, disabled: true, accessToken: 'old' };
   await writeFile(path, JSON.stringify({ accounts: [original] }));
-  const creds = { accountId: 'acct', userId: 'user', email: 'new@example.com', accessToken: 'new', refreshToken: 'refresh', expiresAt: Date.now() + 3600_000 };
+  const creds = { accountId: 'acct', userId: 'user', teamId: 'team', email: 'new@example.com', accessToken: 'new', refreshToken: 'refresh', expiresAt: Date.now() + 3600_000 };
   assert.deepEqual(await upsert(creds, { owner: { ...owner, sharing: 'private' } }), { action: 'updated', id: 'stable', name: 'My account' });
   let saved = JSON.parse(await readFile(path, 'utf8'));
   assert.deepEqual(saved.accounts[0].owner, owner);
@@ -43,7 +43,7 @@ for (const [provider, upsert] of [['codex', upsertCodexAccount], ['anthropic', u
   await assert.rejects(upsert(creds, { owner }), { status: 409 });
   assert.equal(await readFile(path, 'utf8'), operator);
 
-  const added = await upsert({ ...creds, accountId: 'other-acct', email: 'My account', accessToken: 'other-new' }, { owner });
+  const added = await upsert({ ...creds, accountId: 'other-acct', userId: 'other-user', email: 'My account', accessToken: 'other-new' }, { owner });
   assert.equal(added.name, 'My account (alice)');
   assert.ok(added.id);
   saved = JSON.parse(await readFile(path, 'utf8'));

@@ -402,10 +402,11 @@ export RELAYCREW_KEY
 printf '\n'
 npx github:sep1ol/relaycrew member login --claude --private
 npx github:sep1ol/relaycrew member login --codex --pool
+npx github:sep1ol/relaycrew member login --grok --private
 npx github:sep1ol/relaycrew member accounts
 ```
 
-Open the printed link and sign in. For Claude, paste the code the page shows. For Codex, paste the full `localhost:1455/auth/callback` address from the page that does not load. Ctrl-C or EOF cancels the login. A pending login expires after five minutes.
+Open the printed link and sign in. For Claude, paste the code the page shows. For Codex, paste the full `localhost:1455/auth/callback` address from the page that does not load. For Grok, confirm the printed user code in your browser; the CLI waits and polls automatically, with nothing to paste. Claude and Codex pending logins expire after five minutes; Grok gets fifteen minutes. Ctrl-C stops the CLI; EOF cancels a paste prompt.
 
 `--gateway` overrides `RELAYCREW_GATEWAY`, then `ANTHROPIC_BASE_URL`. `--key` overrides `RELAYCREW_KEY`, then `TEAM_GATEWAY_KEY`, then `ANTHROPIC_AUTH_TOKEN`. With no key set, the CLI asks for it without echoing it.
 
@@ -421,6 +422,33 @@ npx github:sep1ol/relaycrew member remove <account-id>
 Members see only their own rows. Administrators can list all rows with the same `member accounts` command and the administrator key. They see each owner and sharing setting through the account and team APIs. They can disable, enable or remove owned rows, but cannot route to private accounts. Only the owner can change sharing, and an owner cannot undo an administrator's disable. Owned credentials are excluded from callback.net sync. A provider account already held by another owner cannot be added again.
 
 Revoke members with `relaycrew team revoke <name>`. Do not hand-delete member entries or reuse their names: ownership follows the permanent member name. Revocation keeps that attribution so an administrator can manage the remaining rows.
+
+### Use the Grok CLI
+
+After `npx github:sep1ol/relaycrew member login --grok --private`, keep `RELAYCREW_KEY` exported in the shell where you run `grok`. To contribute the seat to the team instead, choose `--grok --pool` after reviewing the warnings below. Put this in `~/.grok/config.toml` (use your gateway's URL):
+
+```toml
+[endpoints]
+cli_chat_proxy_base_url = "https://gateway.example.com/grok/v1"
+
+[auth]
+auth_provider_command = "printenv RELAYCREW_KEY"
+```
+
+Then run:
+
+```bash
+unset GROK_MODELS_BASE_URL
+grok
+```
+
+Remove an existing `[endpoints] models_base_url` setting: it selects a different mode and can send Chat Completions requests instead of subscription Responses. The auth command supplies your **RelayCrew member key** as the Bearer token; the gateway injects the selected Grok account's OAuth token. There is no separate `grok login` step for this setup.
+
+`printenv RELAYCREW_KEY` is the command verified against **Grok CLI 1.0.62's bundled external-auth documentation**: on Linux/macOS the command runs through `sh -c`, so shell expansion is available, and Grok trims surrounding stdout whitespace, so `printenv`'s trailing newline is accepted. The supplied local-stub findings directly verified a literal `printf %s <dummy>` command; the shell and newline behavior is documented by the installed CLI. A port-free check with a fake key also confirmed `printenv`'s output. Do not emit status messages on stdout. On Windows the shell is `cmd /C`; use a command appropriate to that platform.
+
+**Terms risk:** [xAI's consumer terms](https://x.ai/legal/terms-of-service) prohibit sharing credentials or making an account available to anyone else; its [acceptable use policy](https://x.ai/legal/acceptable-use-policy) also prohibits circumventing rate limits. Pool sharing conflicts with these restrictions and can lead to suspension. A private seat, used only for its owner's requests, has lower sharing risk. Both modes are offered; the seat owner chooses.
+
+**Money risk:** Grok's weekly pool is per seat and shared with eligible first-party use, including Cursor. After it is exhausted, paid **Additional Usage** and **Auto Top-up** can spend the seat owner's prepaid credits while other members use the gateway. Check those billing settings before choosing `--pool`; RelayCrew has no Grok quota bars or advance allowance signal. See [ADR-002](adr/002-grok-accounts.md).
 
 ## 6. Operate the team
 

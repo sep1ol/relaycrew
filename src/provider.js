@@ -56,6 +56,13 @@ export const PROVIDERS = {
     rewritesBody: false,
     headersTimeoutMs: 300_000,
   },
+  grok: {
+    id: 'grok',
+    label: 'Grok',
+    upstream: 'https://cli-chat-proxy.grok.com',
+    rewritesBody: false,
+    headersTimeoutMs: 300_000,
+  },
 };
 
 export const DEFAULT_PROVIDER = 'anthropic';
@@ -70,7 +77,7 @@ export const DEFAULT_PROVIDER = 'anthropic';
  */
 export function providerOf(account) {
   const id = account?.provider;
-  return (id && PROVIDERS[id]) ? id : DEFAULT_PROVIDER;
+  return isKnownProvider(id) ? /** @type {keyof typeof PROVIDERS} */ (id) : DEFAULT_PROVIDER;
 }
 
 /**
@@ -84,6 +91,7 @@ export function providerOf(account) {
  * Legacy API-key backends stay eligible for any caller so translating upstreams
  * keep working. Native OpenAI API keys belong only to the OpenAI Responses pool.
  */
+/** @param {Record<string, any>|null|undefined} account */
 export function isSubscriptionAccount(account) {
   return account?.type === 'oauth';
 }
@@ -103,6 +111,7 @@ export function isSubscriptionAccount(account) {
  */
 export function canServeProvider(account, provider) {
   const ownProvider = providerOf(account);
+  if (provider === 'grok' || ownProvider === 'grok') return ownProvider === provider && isSubscriptionAccount(account);
   return ownProvider === provider || (!isSubscriptionAccount(account) && ownProvider !== 'openai');
 }
 
@@ -130,17 +139,20 @@ const NEVER_INTERCEPT = new Set(['ab.chatgpt.com']);
  * (see NEVER_INTERCEPT), and matching loosely would have the proxy terminate TLS
  * for hosts nobody asked it to read.
  */
+/** @param {string|null|undefined} host */
 export function providerForHost(host) {
   if (!host || NEVER_INTERCEPT.has(host)) return null;
-  return PROVIDER_HOSTS[host] || null;
+  return PROVIDER_HOSTS[/** @type {keyof typeof PROVIDER_HOSTS} */ (host)] || null;
 }
 
 /** Whether `host` is one we deliberately refuse to intercept. */
+/** @param {string} host */
 export function isNeverIntercepted(host) {
   return NEVER_INTERCEPT.has(host);
 }
 
 /** Hosts to intercept for the providers this config actually uses. */
+/** @param {Array<Record<string, any>>} [accounts] */
 export function interceptHostsFor(accounts = []) {
   const wanted = new Set();
   for (const [host, id] of Object.entries(PROVIDER_HOSTS)) {
@@ -154,8 +166,9 @@ export function interceptHostsFor(accounts = []) {
 }
 
 /** Whether `id` names a provider we know how to talk to. */
+/** @param {unknown} id */
 export function isKnownProvider(id) {
-  return Object.hasOwn(PROVIDERS, id);
+  return typeof id === 'string' && Object.hasOwn(PROVIDERS, id);
 }
 
 // Request paths that belong to Codex rather than Anthropic.
@@ -175,6 +188,7 @@ const CODEX_PATHS = ['/backend-api/codex'];
  * says which pool of accounts is eligible. No second listener, no
  * client-supplied hint that could disagree with the body.
  */
+/** @param {string|undefined} url */
 export function providerForPath(url) {
   // Read on the classification path, never rewritten: the request goes out with
   // the path exactly as it arrived, so this test has to read it the way the
@@ -184,6 +198,7 @@ export function providerForPath(url) {
   // `new URL()` folds to a Codex path before sending it — does not classify as
   // Codex at all, so it draws the wrong pool's credential.
   const path = classificationPath(url);
+  if (path.startsWith('/grok/v1/')) return 'grok';
   if (path === '/v1/responses' || path.startsWith('/v1/responses/')) return 'openai';
   return CODEX_PATHS.some(p => path === p || path.startsWith(`${p}/`))
     ? 'codex'
@@ -203,9 +218,21 @@ export function providerForPath(url) {
  *   `account_uuid` that the Anthropic path patches into the request body —
  *   a header here, so no body rewrite is involved.
  */
-export function applyAuthHeaders(headers, account) {
+/** @param {import('node:http').OutgoingHttpHeaders} headers @param {Record<string, any>} account
+ * @param {string|null} [model] */
+export function applyAuthHeaders(headers, account, model = null) {
   const provider = providerOf(account);
   delete headers['chatgpt-account-id'];
+  if (provider === 'grok') {
+    headers.authorization = `Bearer ${account.credential}`;
+    headers['x-xai-token-auth'] = 'xai-grok-cli';
+    for (const [header, value] of [['x-userid', account.userId], ['x-grok-user-id', account.userId], ['x-email', account.email]]) {
+      delete headers[header];
+      if (value) headers[header] = value;
+    }
+    if (!headers['x-grok-model-override'] && model) headers['x-grok-model-override'] = model;
+    return;
+  }
   if (provider === 'codex' || provider === 'openai') {
     headers['authorization'] = `Bearer ${account.credential}`;
     if (provider === 'codex' && account.accountId) headers['chatgpt-account-id'] = account.accountId;
@@ -218,6 +245,26 @@ export function applyAuthHeaders(headers, account) {
   }
 }
 
+/** Remove only the Grok namespace, preserving the upstream path and query.
+ * @param {string} url */
+export function upstreamPathFor(url) {
+  if (providerForPath(url) !== 'grok') return url;
+  return url.replace(/^[/\\](?:g|%67)(?:r|%72)(?:o|%6f)(?:k|%6b)(?:[/\\]|%2f|%5c)/i, '/');
+}
+
+/** The CLI follows model base_url fields even when its configured base is a gateway.
+ * @param {Buffer} body @returns {Buffer} */
+export function stripGrokModelBaseUrls(body) {
+  const data = JSON.parse(body.toString('utf8'), (key, value) => key === 'base_url' ? undefined : value);
+  return Buffer.from(JSON.stringify(data));
+}
+
+/** @param {number} status @param {Buffer|null} body */
+export function isGrokExhaustion(status, body) {
+  return [429, 402, 403].includes(status) && body !== null
+    && /usage limit reached|out of credits|usage balance exhausted|spending limit/i.test(body.toString('utf8'));
+}
+
 /**
  * Upstream base URL for an account: its own override first, then the
  * provider's default, then the configured Anthropic upstream.
@@ -227,6 +274,7 @@ export function applyAuthHeaders(headers, account) {
  * "where Anthropic lives". Applying it to Codex would silently send OpenAI
  * traffic to an Anthropic host.
  */
+/** @param {Record<string, any>|null|undefined} account @param {string|null} [configuredUpstream] */
 export function upstreamFor(account, configuredUpstream) {
   if (account?.upstream) return account.upstream;
   const provider = providerOf(account);
@@ -235,6 +283,7 @@ export function upstreamFor(account, configuredUpstream) {
 }
 
 /** Whether the Anthropic-only body rewrites apply to this account. */
+/** @param {Record<string, any>|null|undefined} account */
 export function rewritesBody(account) {
   return PROVIDERS[providerOf(account)].rewritesBody;
 }

@@ -3,10 +3,12 @@ title: Grok accounts
 origin: owner
 layers: gateway, dashboard, cli
 created: 2026-10-29
-destination:
+destination: ADR-002
 ---
 
 # Grok accounts
+
+Promoted to [ADR-002: Grok subscription accounts](../../../adr/002-grok-accounts.md).
 
 ## Idea
 Pool xAI/Grok accounts the same way Claude and Codex accounts are pooled, so a member can sign in with Grok and contribute it, privately or to the pool.

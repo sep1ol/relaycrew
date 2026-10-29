@@ -31,8 +31,8 @@ export async function persistAccount(account, { owner = null, routing = null, st
   /** @type {Parameters<typeof recordSignInWithCallback>[0]|undefined} */
   let signedIn;
   await atomicConfigUpdate((/** @type {{accounts: Array<Parameters<typeof updateAccountEntry>[0]>}} */ config) => {
-    account.name ||= account.provider === 'codex'
-      ? `codex-${config.accounts.filter(row => row.provider === 'codex').length + 1}`
+    account.name ||= account.provider === 'codex' || account.provider === 'grok'
+      ? `${account.provider}-${config.accounts.filter(row => row.provider === account.provider).length + 1}`
       : `account-${config.accounts.filter(row => row.name.startsWith('account-')).length + 1}`;
     if (owner) account.owner = { ...owner };
     if (routing && storeRouting) account.routing = routingToUrl(routing);
@@ -86,6 +86,16 @@ export async function upsertCodexAccount(creds, opts = {}) {
   return persistAccount({
     name: opts.name || creds.email, type: 'oauth', provider: 'codex', source: opts.source ?? 'login',
     accountId: creds.accountId, userId: creds.userId,
+    accessToken: creds.accessToken, refreshToken: creds.refreshToken, expiresAt: creds.expiresAt,
+  }, opts);
+}
+
+/** @param {Record<string, any>} creds @param {UpsertOptions} [opts] @returns {Promise<UpsertResult>} */
+export async function upsertGrokAccount(creds, opts = {}) {
+  if (!creds.userId || !creds.accessToken || !creds.refreshToken) throw new AccountActionError('Grok sign-in returned incomplete credentials.', 502);
+  return persistAccount({
+    name: opts.name || creds.email, type: 'oauth', provider: 'grok', source: opts.source ?? 'login',
+    userId: creds.userId, ...(creds.teamId ? { teamId: creds.teamId } : {}), ...(creds.email ? { email: creds.email } : {}),
     accessToken: creds.accessToken, refreshToken: creds.refreshToken, expiresAt: creds.expiresAt,
   }, opts);
 }

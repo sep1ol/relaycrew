@@ -4,7 +4,7 @@ import { canonicalControlUrl } from './brand.js';
 import { teamAccessFor, teamIdentityValid } from './team-access.js';
 import { serializeMutation, teamJson } from './team-api.js';
 import { AccountActionError, accountView, accountViews, applyAccountAction, validateSharing } from './owned-accounts.js';
-import { identifyOAuthAccount, persistAccount, upsertCodexAccount } from './account-upsert.js';
+import { identifyOAuthAccount, persistAccount, upsertCodexAccount, upsertGrokAccount } from './account-upsert.js';
 
 /** @param {any} req @param {(req: any) => Promise<string|Buffer>} readBody @param {string[]} fields */
 async function accountBody(req, readBody, fields) {
@@ -63,7 +63,7 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
     const fields = action === 'login' ? ['provider', 'sharing'] : action === 'login/complete' ? ['id', 'code'] : action === 'update' ? ['id', 'disabled', 'sharing'] : ['id'];
     const body = await accountBody(req, readBody, fields);
     if (action === 'login') {
-      if (body.provider !== 'claude' && body.provider !== 'codex') throw new AccountActionError('Provider must be claude or codex.');
+      if (!['claude', 'codex', 'grok'].includes(body.provider)) throw new AccountActionError('Provider must be claude, codex or grok.');
       const sharing = identity.kind === 'member' ? validateSharing(body.sharing) : 'private';
       let login;
       try { login = await loginService().start(identity, { provider: body.provider, sharing }); }
@@ -83,22 +83,31 @@ export async function handleAccountRequest(req, res, { config, hooks = {}, login
     /** @type {() => Promise<Record<string, any>>} */
     let change;
     if (action === 'login/complete') {
-      const code = requiredText(body.code, 'code');
       const pending = loginService().require(identity, id);
-      let accepted;
-      try { accepted = loginService().submit(identity, id, code); }
-      catch (error) { throw new AccountActionError(/** @type {Error} */ (error).message); }
-      if (!accepted) throw new AccountActionError('This login has already completed.', 409);
-      let creds;
-      try { creds = await loginService().result(identity, id); }
-      catch (error) {
-        if (error instanceof AccountActionError) throw error;
-        throw new AccountActionError('The provider refused the code. Start a new login.', 502);
+      if (pending.provider !== 'grok') {
+        const code = requiredText(body.code, 'code');
+        let accepted;
+        try { accepted = loginService().submit(identity, id, code); }
+        catch (error) { throw new AccountActionError(/** @type {Error} */ (error).message); }
+        if (!accepted) throw new AccountActionError('This login has already completed.', 409);
       }
+      let creds;
+      try { creds = pending.provider === 'grok' ? await loginService().waitResult(identity, id) : await loginService().result(identity, id); }
+      catch (error) {
+        if (pending.provider === 'grok' && loginService().find(identity, id)) loginService().cancel(identity, id);
+        if (error instanceof AccountActionError) throw error;
+        throw new AccountActionError('The provider refused the sign-in. Start a new login.', 502);
+      }
+      if (creds === null) {
+        teamJson(res, 202, { ok: true, pending: true });
+        return true;
+      }
+      if (pending.provider === 'grok') loginService().cancel(identity, id);
       const opts = { owner: pending.owner, source: /** @type {const} */ ('login') };
       const account = pending.provider === 'claude' ? await identifyOAuthAccount(creds, opts) : null;
       change = async () => {
-        const outcome = account ? await persistAccount(account, opts) : await upsertCodexAccount(creds, opts);
+        const outcome = account ? await persistAccount(account, opts)
+          : pending.provider === 'grok' ? await upsertGrokAccount(creds, opts) : await upsertCodexAccount(creds, opts);
         const disk = await loadConfigPersistingIds();
         return { action: outcome.action, account: accountView(disk.accounts.find((/** @type {{id: string}} */ row) => row.id === outcome.id)) };
       };

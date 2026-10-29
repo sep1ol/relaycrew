@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { MemberLogins } from '../src/member-logins.js';
 import { codeRace } from '../src/login-flow.js';
 import { startCodexLogin } from '../src/codex-auth.js';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { handleAccountRequest } from '../src/account-api.js';
+import { authenticateTeam } from '../src/team-access.js';
 
 test('pending logins bind keys, retry pastes, replace older flows and enforce cap and expiry', async () => {
   let now = 1000;
@@ -58,4 +63,55 @@ test('Codex paste-only login skips the listener and exchanges the pasted callbac
   const state = new URL(flow.url).searchParams.get('state');
   assert.equal(flow.submit(`http://localhost:1455/auth/callback?state=${state}&code=fake-code`), true);
   assert.deepEqual(await flow.credentials, { accessToken: 'fake-code' });
+});
+
+test('Grok member completion returns 202, retains authorization between polls, then saves the owned account', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'relaycrew-grok-login-'));
+  const previous = process.env.RELAYCREW_CONFIG;
+  const path = process.env.RELAYCREW_CONFIG = join(dir, 'config.json');
+  const config = { accounts: [], proxy: { teamMode: true, apiKey: 'admin', clientKeys: [{ name: 'alice', key: 'member-key', accounts: '*' }] } };
+  await writeFile(path, JSON.stringify(config));
+  let authorize;
+  const credentials = new Promise(resolve => { authorize = resolve; });
+  let now = 1000;
+  const logins = new MemberLogins({ now: () => now, waitMs: 1, startGrok: async ({ timeoutMs }) => {
+    assert.equal(timeoutMs, 15 * 60_000);
+    return { url: 'https://accounts.x.ai/device', userCode: 'ABCD-EFGH', expiresAt: now + timeoutMs, credentials };
+  } });
+  t.after(async () => {
+    for (const pending of logins.pending.values()) logins.drop(pending);
+    if (previous === undefined) delete process.env.RELAYCREW_CONFIG; else process.env.RELAYCREW_CONFIG = previous;
+    await rm(dir, { recursive: true, force: true });
+  });
+  const identity = authenticateTeam(config.proxy, 'member-key').identity;
+  async function request(route, body) {
+    let status, data;
+    const response = { writeHead(code) { status = code; }, end(text) { data = JSON.parse(text); } };
+    await handleAccountRequest({ method: 'POST', url: `/relaycrew/accounts/${route}`, tcTeamIdentity: identity }, response, {
+      config, logins, readBody: async () => JSON.stringify(body), hooks: { reload: async () => {} },
+    });
+    return { status, data };
+  }
+  const started = await request('login', { provider: 'grok', sharing: 'private' });
+  assert.equal(started.status, 201);
+  assert.equal(started.data.login.paste, 'none');
+  assert.equal(started.data.login.userCode, 'ABCD-EFGH');
+  assert.equal(started.data.login.expiresAt, now + 15 * 60_000);
+  const id = started.data.login.id;
+  assert.deepEqual(await request('login/complete', { id }), { status: 202, data: { ok: true, pending: true } });
+  authorize({ userId: 'grok-user', teamId: 'grok-team', email: 'alice@example.invalid', accessToken: 'access-secret', refreshToken: 'refresh-secret', expiresAt: Date.now() + 21600_000 });
+  await logins.result(identity, id);
+  assert.ok(logins.find(identity, id));
+  const complete = await request('login/complete', { id });
+  assert.equal(complete.status, 200);
+  assert.equal(complete.data.account.provider, 'grok');
+  assert.equal(complete.data.account.owner, 'alice');
+  assert.equal(JSON.stringify(complete).includes('secret'), false);
+  assert.equal(logins.find(identity, id), null);
+  const saved = JSON.parse(await readFile(path, 'utf8')).accounts[0];
+  assert.deepEqual(saved.owner, { name: 'alice', sharing: 'private' });
+  assert.equal(saved.refreshToken, 'refresh-secret');
+  const next = await logins.start(identity, { provider: 'grok', sharing: 'pool' });
+  now += 15 * 60_000;
+  assert.equal(logins.find(identity, next.id), null);
 });

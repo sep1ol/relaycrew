@@ -15,7 +15,7 @@ import { TopLevelFieldFinder, modelGlobMatches, parseRequestEffort, parseRequest
 import { conversationDigest, pinKeyFor } from './conversation.js';
 import { BodyWriter, truncationNote } from './request-log.js';
 import { upstreamFetch, upstreamPoolStatus } from './upstream-fetch.js';
-import { applyAuthHeaders, upstreamFor, rewritesBody, defaultHeadersTimeoutFor, providerForPath, providerForHost, interceptHostsFor, providerOf, canServeProvider, DEFAULT_PROVIDER, PROVIDERS } from './provider.js';
+import { applyAuthHeaders, upstreamFor, upstreamPathFor, stripGrokModelBaseUrls, isGrokExhaustion, rewritesBody, defaultHeadersTimeoutFor, providerForPath, providerForHost, interceptHostsFor, providerOf, canServeProvider, DEFAULT_PROVIDER, PROVIDERS } from './provider.js';
 import { tunnelTls } from './sx.js';
 import { createEgressGuard } from './egress-guard.js';
 import { isRoutingFailure, describeRouting } from './account-routing.js';
@@ -1462,13 +1462,13 @@ const SESSION_ID_SHAPE = /^[A-Za-z0-9._-]{1,128}$/;
 /** The session id a request carries, or null when the header is absent or
  *  malformed — a malformed one is treated as no session, not rejected.
  *
- *  Claude Code sends `x-claude-code-session-id`, the Codex CLI `session-id`.
+ *  Grok sends `x-grok-conv-id`, Claude Code `x-claude-code-session-id`, and Codex `session-id`.
  *  Reading only the first left every Codex request untagged, so
  *  `distributeSessions` had nothing to place and a Codex pool stayed on one
  *  account until the switch threshold. The specific header wins when both are
  *  present: `session-id` is generic enough for a proxy in front to set. */
 export function clientSessionId(headers) {
-  const raw = headers['x-claude-code-session-id'] ?? headers['session-id'];
+  const raw = headers['x-grok-conv-id'] ?? headers['x-claude-code-session-id'] ?? headers['session-id'];
   return typeof raw === 'string' && SESSION_ID_SHAPE.test(raw) ? raw : null;
 }
 
@@ -3437,9 +3437,9 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
   // Credential presentation is provider-specific: Anthropic OAuth and Codex
   // both use a bearer token, Anthropic API keys use x-api-key, and Codex also
   // needs ChatGPT-Account-Id to scope the token to one account.
-  applyAuthHeaders(headers, account);
+  applyAuthHeaders(headers, account, ctx.model);
 
-  const upstreamUrl = `${upstreamFor(account, upstream)}${req.url}`;
+  const upstreamUrl = `${upstreamFor(account, upstream)}${upstreamPathFor(req.url)}`;
   const method = req.method;
 
   // An upstream that keeps no thread state would receive only this turn's delta
@@ -3611,6 +3611,26 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     // this is what lets a revalidation probe (a throttled account selected by
     // _selectProbe) clear its own hold and return the fleet to service.
     if (upstreamRes.status !== 429) accountManager.clearRateLimited(account.index);
+
+    if (ctx.provider === 'grok' && [429, 402, 403].includes(upstreamRes.status)) {
+      const raw = await readErrorBody(upstreamRes.body);
+      if (isGrokExhaustion(upstreamRes.status, raw)) {
+        const seconds = Number(upstreamRes.headers.get('retry-after')) || 60;
+        const hold = Math.min(Math.max(seconds, 1), 3600);
+        accountManager.markRateLimited(account.index, hold);
+        ctx.tried.add(account.index);
+        console.log(`[RelayCrew] Grok usage exhausted on "${safeLine(account.name, 64)}" — throttling ${hold}s and switching account`);
+        if (clientGone(res)) { ctx.abandoned = true; return; }
+        return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
+      }
+      // Inspection consumed the stream; replay other refusals through the normal handling.
+      const buffered = raw ?? Buffer.alloc(0);
+      upstreamRes = {
+        status: upstreamRes.status, headers: upstreamRes.headers,
+        body: new ReadableStream({ start(controller) { controller.enqueue(buffered); controller.close(); } }),
+        arrayBuffer: async () => buffered,
+      };
+    }
 
     // Other 429s retain their established classification: quota rejection
     // rotates, while a transient throttle pauses and retries.
@@ -4094,6 +4114,10 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
       Object.assign(responseHeaders, backendQuotaHeaders(account.quota?.backend?.windows));
     }
 
+    let modelBody = null;
+    if (ctx.provider === 'grok' && classificationPath(req.url) === '/grok/v1/models' && upstreamRes.status < 400) {
+      modelBody = stripGrokModelBaseUrls(Buffer.from(await upstreamRes.arrayBuffer()));
+    }
     res.writeHead(upstreamRes.status, responseHeaders);
 
     // The catch block's retry is guarded by `!res.headersSent`, so a stay
@@ -4130,7 +4154,7 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
       }
       l?.end();
     } else {
-      const buf = Buffer.from(await upstreamRes.arrayBuffer());
+      const buf = modelBody ?? Buffer.from(await upstreamRes.arrayBuffer());
       extractUsageFromBody(buf, account.index, accountManager, ctx.onUsage, ctx.pinKey, ctx.model, ctx.onMessage);
       const l = getLog();
       if (l) { l.body('RESPONSE BODY', buf, contentType); l.end(); }

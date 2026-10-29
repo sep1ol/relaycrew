@@ -101,8 +101,8 @@ export function teamError(res, status, message) {
 export function teamInferencePath(method, url) {
   let path = classificationPath(url);
   if (path.startsWith('/tc-acct/')) path = path.slice(path.indexOf('/', '/tc-acct/'.length));
-  if (method === 'POST') return ['/v1/messages', '/v1/messages/count_tokens', '/v1/responses', '/responses', '/responses/compact', '/v1/responses/compact', '/backend-api/codex/responses', '/backend-api/codex/responses/compact'].includes(path);
-  return method === 'GET' && ['/v1/models', '/models', '/backend-api/codex/models'].includes(path);
+  if (method === 'POST') return ['/v1/messages', '/v1/messages/count_tokens', '/v1/responses', '/responses', '/responses/compact', '/v1/responses/compact', '/backend-api/codex/responses', '/backend-api/codex/responses/compact', '/grok/v1/responses'].includes(path);
+  return method === 'GET' && ['/v1/models', '/models', '/backend-api/codex/models', ...['settings', 'models', 'user', 'bundle/archive', 'subagents/bundle', 'feedback/config'].map(route => `/grok/v1/${route}`)].includes(path);
 }
 
 /** @param {string|undefined} method @param {string|undefined} url */

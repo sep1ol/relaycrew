@@ -255,6 +255,7 @@ export async function refreshAccessToken(refreshToken, endpoint = DEFAULT_TOKEN_
  * seconds when either is a finite number — or one hour from now when neither
  * is, which just makes the next refresh happen early.
  */
+/** @param {Record<string, any>} data @param {{previousRefreshToken?: string, now?: number}} [opts] */
 export function tokenPairFromResponse(data, { previousRefreshToken = undefined, now = Date.now() } = {}) {
   const accessToken = data?.access_token;
   if (typeof accessToken !== 'string' || accessToken === '') {
