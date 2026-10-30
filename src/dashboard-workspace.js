@@ -448,6 +448,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     navigate();
     $('summary').hidden = memberMode();
     $('accountsRefresh').hidden = !admin() || !accountApiAvailable;
+    $('accountsAdd').hidden = !admin() || !accountApiAvailable;
     ['.gateway-pill', '.sidebar-note', '.nav-caption'].forEach(function (selector) {
       document.querySelectorAll(selector).forEach(function (element) { element.hidden = memberMode(); });
     });
@@ -513,7 +514,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
       } catch (error) {
         if (!currentAuth(context)) return;
         if (admin() && error && typeof error === 'object' && 'status' in error && error.status === 404) {
-          accountApiAvailable = false; $('accountsRefresh').hidden = true; state.accountRows = []; repaintAccounts(); message('accountMessage', function () { return ''; });
+          accountApiAvailable = false; $('accountsRefresh').hidden = true; $('accountsAdd').hidden = true; state.accountRows = []; repaintAccounts(); message('accountMessage', function () { return ''; });
         } else message('accountMessage', function () { return t('Could not refresh accounts. {error} Use "Refresh" to try again.', { error: errorText(error) }); }, 'error');
       } finally { if (currentAuth(context)) { accountsRequest = null; $('myAccountsRefresh').disabled = false; $('accountsRefresh').disabled = false; } }
     })();
@@ -629,7 +630,9 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   }
   function renderAccountLogin() {
     var login = state.login;
+    $('accountLoginTitle').textContent = memberMode() ? t('Add my account') : t('Add account');
     $('accountLoginChoices').hidden = !!login; $('accountLoginSteps').hidden = !login;
+    $('accountLoginSharingField').hidden = !memberMode(); $('accountLoginOperatorHelp').hidden = memberMode();
     $('accountLoginProvider').disabled = state.loginBusy; $('accountLoginSharing').disabled = state.loginBusy;
     $('accountLoginSharingHelp').textContent = $('accountLoginSharing').value === 'pool' ? t('Team members can use this account when their account permissions allow it.') : t('Only your key can use this account.');
     $('accountLoginSubmit').textContent = login ? t('Connect account') : t('Continue to sign-in');
@@ -665,7 +668,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     } finally { if (currentAuth(context) && epoch === state.loginEpoch) { state.loginBusy = false; renderAccountLogin(); } }
   }
   $('accountLoginForm').addEventListener('submit', /** @param {WorkspaceEvent} event */ async function (event) {
-    event.preventDefault(); if (!memberMode() || state.loginBusy) return;
+    event.preventDefault(); if ((!memberMode() && !admin()) || state.loginBusy) return;
     var context = authContext(), epoch = state.loginEpoch;
     if (state.login) { await completeAccountLogin(state.login, context, epoch); return; }
     state.loginBusy = true; renderAccountLogin(); message('accountLoginError', function () { return ''; }); message('accountLoginMessage', function () { return t('Starting sign-in…'); });
@@ -681,10 +684,10 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     } finally { if (currentAuth(context) && epoch === state.loginEpoch) { state.loginBusy = false; renderAccountLogin(); } }
     if (currentAuth(context) && epoch === state.loginEpoch && state.login?.paste === 'none') completeAccountLogin(state.login, context, epoch);
   });
-  $('accountAdd').addEventListener('click', function () {
-    if (!memberMode()) return;
+  ['accountAdd', 'accountsAdd'].forEach(function (id) { $(id).addEventListener('click', function () {
+    if (!memberMode() && !admin()) return;
     resetAccountLogin(); $('accountLoginProvider').value = 'claude'; $('accountLoginSharing').value = 'private'; renderAccountLogin(); $('accountLoginDialog').showModal();
-  });
+  }); });
   $('myAccountsRefresh').addEventListener('click', loadAccounts);
   $('accountsRefresh').addEventListener('click', loadAccounts);
   $('accountLoginSharing').addEventListener('change', renderAccountLogin);

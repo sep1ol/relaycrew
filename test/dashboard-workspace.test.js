@@ -83,6 +83,11 @@ test('browser refuses admin-only APIs for keyless loopback and member/legacy cre
     } else assert.match(page.$('teamMessage').textContent, /administrador/);
     assert.equal(page.requests.length, 0);
     assert.equal(page.$('teamAdd').disabled, true);
+    assert.equal(page.$('accountsAdd').hidden, true);
+    if (options.caller?.kind !== 'member') {
+      await page.$('accountsAdd').fire('click');
+      assert.equal(page.$('accountLoginDialog').open, false); assert.equal(page.requests.length, 0);
+    }
   }
 });
 
@@ -131,6 +136,10 @@ test('add account dialog sends provider/sharing and the correct completion body 
   for (const [provider, paste, sharing, code] of [['claude', 'code', 'private', 'code#state'], ['codex', 'callback-url', 'pool', 'http://localhost:1455/auth/callback?code=auth&state=state'], ['grok', 'none', 'pool', null]]) {
     const page = memberPage(); await page.answer(200, { accounts: [] });
     await page.$('accountAdd').fire('click');
+    assert.equal(page.$('accountAdd').textContent, 'Add my account');
+    assert.equal(page.$('accountLoginTitle').textContent, 'Add my account');
+    assert.equal(page.$('accountLoginSharing').parentNode.hidden, false);
+    assert.equal(page.$('accountLoginOperatorHelp').hidden, true);
     page.$('accountLoginProvider').value = provider; page.$('accountLoginSharing').value = sharing;
     const start = page.$('accountLoginForm').fire('submit'); await page.flush();
     assert.equal(page.requests[0].url, '/relaycrew/accounts/login');
@@ -167,6 +176,53 @@ test('add account dialog sends provider/sharing and the correct completion body 
       assert.match(page.$('myAccountsContent').textContent, /Personal subscription/);
     }
   }
+});
+
+test('administrators connect all three providers from Accounts and refresh the fleet', async () => {
+  for (const [provider, paste, code] of [['claude', 'code', 'code#state'], ['codex', 'callback-url', 'http://localhost:1455/auth/callback?code=auth&state=state'], ['grok', 'none', '']]) {
+    const page = boot({ locale: null, live: true, hash: '#accounts' });
+    await page.answer(200, page.status); await page.answer(200, { accounts: [] });
+    const panel = page.document.querySelectorAll('[data-panel]').find(panel => panel.getAttribute('data-panel') === 'accounts');
+    assert.equal(panel.hidden, false);
+    assert.equal(page.$('accountsAdd').parentNode, page.$('accountsRefresh').parentNode);
+    assert.equal(page.$('accountsAdd').textContent, 'Add account'); assert.equal(page.$('accountsAdd').hidden, false);
+    await page.$('accountsAdd').fire('click');
+    assert.equal(page.$('accountLoginDialog').open, true); assert.equal(page.$('accountLoginTitle').textContent, 'Add account');
+    assert.equal(page.$('accountLoginSharing').parentNode.hidden, true);
+    assert.equal(page.$('accountLoginOperatorHelp').hidden, false);
+    assert.equal(page.$('accountLoginOperatorHelp').textContent, 'Operator account. Grant it to members in Team.');
+    page.$('accountLoginProvider').value = provider;
+    const start = page.$('accountLoginForm').fire('submit'); await page.flush();
+    assert.equal(page.requests[0].url, '/relaycrew/accounts/login');
+    assert.deepEqual(JSON.parse(page.requests[0].init.body), { provider, sharing: 'private' });
+    assert.equal(page.requests[0].init.headers['x-api-key'], 'admin-key');
+    const login = { id: 'operator-login', provider, paste, url: 'https://provider.test/authorize', ...(paste === 'none' ? { userCode: 'ABCD' } : {}) };
+    await page.answer(201, { login }); await start;
+    assert.equal(page.$('accountLoginLink').getAttribute('href'), login.url);
+    page.$('accountLoginCode').value = code;
+    const complete = paste === 'none' ? Promise.resolve() : page.$('accountLoginForm').fire('submit'); await page.flush();
+    assert.equal(page.requests[0].url, '/relaycrew/accounts/login/complete');
+    assert.deepEqual(JSON.parse(page.requests[0].init.body), paste === 'none' ? { id: login.id } : { id: login.id, code });
+    const account = { id: 'operator-account', name: 'New operator subscription', provider: provider === 'claude' ? 'anthropic' : provider, type: 'oauth', owner: null, sharing: 'operator' };
+    await page.answer(200, { ok: true, applied: true, account });
+    assert.equal(page.requests[0].url, '/relaycrew/accounts'); await page.answer(200, { accounts: [account] }); await complete;
+    assert.equal(page.requests[0].url, '/relaycrew/status'); await page.answer(200, { ...page.status, accounts: [account] });
+    assert.equal(page.$('accountLoginDialog').open, false); assert.equal(page.$('accountLoginCode').value, '');
+    assert.match(page.$('accounts').textContent, /New operator subscription/);
+  }
+});
+
+test('administrators can cancel provider sign-in from the shared dialog', async () => {
+  const page = boot({ locale: null, hash: '#accounts' }); await page.answer(200, { accounts: [] });
+  await page.$('accountsAdd').fire('click');
+  const start = page.$('accountLoginForm').fire('submit'); await page.flush();
+  await page.answer(201, { login: { id: 'operator-login', provider: 'claude', paste: 'code', url: 'https://provider.test/authorize' } }); await start;
+  await page.$('accountLoginCancel').fire('click');
+  assert.equal(page.$('accountLoginDialog').open, false);
+  assert.equal(page.requests[0].url, '/relaycrew/accounts/login/cancel');
+  assert.deepEqual(JSON.parse(page.requests[0].init.body), { id: 'operator-login' });
+  assert.equal(page.requests[0].init.headers['x-api-key'], 'admin-key');
+  await page.answer(200, { ok: true });
 });
 
 test('Grok polls complete sequentially on 202, stops on success, and ignores canceled in-flight completion', async () => {
