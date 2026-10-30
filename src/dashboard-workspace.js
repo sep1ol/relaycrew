@@ -51,13 +51,15 @@
  * @property {number} lastGood
  * @property {TeamAccount[]|null} accountRows
  * @property {number} accountsAt
+ * @property {import('./pool-view.js').PoolView|null} pool
+ * @property {number} poolAt
  * @property {boolean} accountBusy
  * @property {TeamAccount|null} removing
  * @property {AccountLogin|null} login
  * @property {boolean} loginBusy
  * @property {number} loginEpoch
  *
- * @typedef {{getElementById: (id: string) => any, querySelectorAll: (selector: string) => any[], createElement: (tag: string) => any, createElementNS: (namespace: string, tag: string) => any, title: string, documentElement?: any, activeElement?: any}} WorkspaceDocument
+ * @typedef {{getElementById: (id: string) => any, querySelectorAll: (selector: string) => any[], createElement: (tag: string) => any, createElementNS: (namespace: string, tag: string) => any, title: string, documentElement?: any, activeElement?: any, hidden?: boolean, addEventListener?: (name: string, listener: () => void) => void}} WorkspaceDocument
  * @typedef {{preventDefault: () => void, key?: string, currentTarget: any}} WorkspaceEvent
  * @typedef {{update: (status: WorkspaceStatus) => void, failed: (text: string) => void, signedOut: () => void, accountControls: (account: WorkspaceAccount, target: any) => boolean, renderAccounts?: () => void, refresh?: () => void}} WorkspaceController
  * @typedef {{location: {hash: string}, navigator: {clipboard?: {writeText: (text: string) => Promise<void>}}, addEventListener: (name: string, listener: () => void) => void, setTimeout: (callback: () => void, delay: number) => number, clearTimeout: (timer: number) => void, getComputedStyle?: (element: any) => {backgroundColor: string, getPropertyValue?: (key: string) => string}, RelayWorkspace: WorkspaceController}} WorkspaceWindow
@@ -184,11 +186,17 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     history: null, preview: null, selected: null, historyAt: 0, previewAt: 0,
     historySeq: 0, previewSeq: 0, distributionSort: 'value', distributionDir: -1,
     teamAt: 0, action: null, submitting: false, lastGood: 0,
-    accountRows: null, accountsAt: 0, accountBusy: false, removing: null, login: null, loginBusy: false, loginEpoch: 0 };
+    accountRows: null, accountsAt: 0, accountBusy: false, removing: null, login: null, loginBusy: false, loginEpoch: 0,
+    pool: null, poolAt: 0 };
   /** @type {Promise<void>|null} */
   var teamRequest = null;
   /** @type {Promise<void>|null} */
   var accountsRequest = null;
+  /** @type {Promise<void>|null} */
+  var poolRequest = null;
+  /** @type {(() => string)|null} */
+  var poolFailure = null;
+  var poolApiAvailable = true;
   /** @type {number|null} */
   var loginTimer = null;
   /** @type {AuthContext|null} */
@@ -333,7 +341,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     renderViewTitle();
     $('accountMessage').hidden = ['my-accounts', 'accounts', 'team'].indexOf(view) < 0;
     if (changed && state.status) {
-      if (view === 'my-accounts' || view === 'accounts') loadAccounts();
+      if (view === 'my-accounts' || view === 'accounts') { loadAccounts(); loadPool(true); }
       if (view === 'team') loadTeam();
       if (view === 'usage') loadHistory(true);
       if (view === 'overview') loadPreview();
@@ -454,7 +462,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     });
     if ($('previewLabel')) $('previewLabel').hidden = !status.dashboardPreview;
     $('connection').textContent = t('Updated at {time}', { time: i18n.date(state.lastGood, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) });
-    if (memberMode()) { if (Date.now() - state.accountsAt >= 5000) loadAccounts(); return; }
+    if (memberMode()) { if (Date.now() - state.accountsAt >= 5000) loadAccounts(); loadPool(); return; }
     updateOverview(status); updateScopes(status); renderPins(status);
     document.querySelectorAll('th.sortable').forEach(function (header) {
       header.tabIndex = 0; header.setAttribute('role', 'columnheader');
@@ -464,6 +472,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     if (state.view === 'usage' && Date.now() - state.historyAt > 30000) loadHistory();
     if (state.view === 'team' && Date.now() - state.teamAt > 30000) loadTeam();
     if (state.view === 'accounts' && Date.now() - state.accountsAt >= 5000) loadAccounts();
+    loadPool();
   }
   /** @param {string} text */
   function failed(text) {
@@ -478,6 +487,9 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     teamRequest = null; state.submitting = false; state.editing = null; state.editRevision = null; state.action = null;
     state.teamAt = 0; state.historyAt = 0; state.previewAt = 0; state.lastGood = 0; connectionFailure = null;
     state.accountRows = null; state.accountsAt = 0; accountsRequest = null; accountApiAvailable = true;
+    state.pool = null; state.poolAt = 0; poolRequest = null; poolApiAvailable = true; poolFailure = null;
+    $('memberPool').textContent = ''; $('adminPool').textContent = '';
+    $('memberPoolSection').hidden = true; $('adminPoolSection').hidden = true;
     state.accountBusy = false; state.removing = null;
     $('myAccountsContent').textContent = ''; $('myAccountsRefresh').disabled = false; $('accountRemoveConfirm').disabled = false;
     ['accounts', 'summary', 'problems', 'overviewStats', 'providerSummary', 'overviewAttention', 'routes', 'clients', 'dimensionsWrap', 'sessions', 'sessionPinsList', 'foot'].forEach(function (id) { $(id).textContent = ''; });
@@ -492,6 +504,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   function repaintAccounts() {
     var focusKey = document.activeElement?.getAttribute?.('data-workspace-focus');
     renderMyAccounts();
+    renderPool();
     if (window.RelayWorkspace.renderAccounts) window.RelayWorkspace.renderAccounts();
     renderTeam();
     if (focusKey) document.querySelectorAll('[data-workspace-focus]').forEach(function (element) { if (element.getAttribute('data-workspace-focus') === focusKey) element.focus(); });
@@ -564,6 +577,109 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     if (!memberMode() || !state.accountRows) return;
     if (!state.accountRows.length) { empty(target, t('No accounts of your own yet'), t('Choose "Add my account" to connect a subscription. You decide whether to keep it private or share it with the pool.')); return; }
     target.appendChild(accountTable(state.accountRows, false));
+  }
+  function poolVisible() {
+    return !document.hidden && !!state.status && (memberMode() || admin())
+      && (state.view === 'my-accounts' || state.view === 'accounts');
+  }
+  /** @param {boolean} [force] skip the 15 s cadence, for a view change @returns {Promise<void>} */
+  function loadPool(force) {
+    if (poolRequest) return poolRequest;
+    if (!poolVisible() || !poolApiAvailable || (!force && Date.now() - state.poolAt < 15000)) return Promise.resolve();
+    var context = authContext(); state.poolAt = Date.now();
+    renderPool();
+    poolRequest = (async function () {
+      try {
+        /** @type {import('./pool-view.js').PoolView} */
+        var data = await request('/relaycrew/accounts/pool', undefined, context);
+        if (!Array.isArray(data.groups)) throw presentationError(function () { return t('Invalid pool response.'); });
+        state.pool = data; poolFailure = null; renderPool();
+      } catch (error) {
+        if (!currentAuth(context)) return;
+        if (error && typeof error === 'object' && 'status' in error && error.status === 404) { poolApiAvailable = false; state.pool = null; }
+        else poolFailure = function () { return t('Could not refresh pool. {error} Retrying automatically.', { error: errorText(error) }); };
+        renderPool();
+      } finally { if (currentAuth(context)) poolRequest = null; }
+    })();
+    return poolRequest;
+  }
+  /** @param {import('./pool-view.js').PoolWindow|import('./pool-view.js').PoolTotal} window */
+  function poolWindowLabel(window) {
+    if (window.key === 'fiveHour') return t('5h');
+    if (window.key === 'weekly') return t('Week');
+    if (window.key === 'tokens') return t('Tokens');
+    if (window.key === 'requests') return t('Requests');
+    if (window.key === 'monthly') return t('Month');
+    return t('Week · {model}', { model: window.label });
+  }
+  /** @param {number} milliseconds */
+  function poolDuration(milliseconds) {
+    var minutes = Math.max(1, Math.round(milliseconds / 60000)), hours = Math.floor(minutes / 60);
+    if (!hours) return t('{minutes}m', { minutes: number(minutes) });
+    return minutes % 60 ? t('{hours}h {minutes}m', { hours: number(hours), minutes: number(minutes % 60) }) : t('{hours}h', { hours: number(hours) });
+  }
+  /** @param {number|null} remaining @param {number|null} resetAt @param {number|null} seenAt @param {string} label @param {boolean} [total] */
+  function poolBar(remaining, resetAt, seenAt, label, total) {
+    var now = Date.now(), stale = seenAt !== null && now - seenAt > 1800000;
+    var value = remaining === null ? '?' : t('{percent} left', { percent: i18n.number(remaining, { style: 'percent', maximumFractionDigits: 0 }) });
+    var text = total ? label + ' · ' + value : value;
+    var reset = resetAt !== null ? t('resets in {duration}', { duration: poolDuration(resetAt - now) }) : '';
+    if (total && reset) text += ' · ' + reset;
+    var box = node('div', stale ? 'pool-quota stale' : 'pool-quota');
+    box.appendChild(node('span', '', text));
+    var bar = node('div', 'bar'), fill = node('i', remaining !== null && remaining <= .1 ? 'bad' : remaining !== null && remaining <= .3 ? 'warn' : '');
+    bar.setAttribute('role', 'meter'); bar.setAttribute('aria-label', label); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
+    bar.setAttribute('aria-valuetext', remaining === null ? t('Unknown') : value);
+    if (remaining !== null) bar.setAttribute('aria-valuenow', String(Math.round(remaining * 100)));
+    fill.style.width = (remaining === null ? 0 : remaining * 100) + '%'; bar.appendChild(fill); box.appendChild(bar);
+    if (!total && reset) box.appendChild(node('small', '', reset));
+    if (seenAt !== null && stale) box.appendChild(node('small', '', t('updated {duration} ago', { duration: poolDuration(now - seenAt) })));
+    return box;
+  }
+  function renderPool() {
+    $('memberPoolSection').hidden = !memberMode() || !poolApiAvailable;
+    $('adminPoolSection').hidden = !admin() || !poolApiAvailable;
+    var target = memberMode() ? $('memberPool') : $('adminPool'); target.textContent = '';
+    if (!poolApiAvailable || !state.status || (!memberMode() && !admin())) return;
+    if (poolFailure) target.appendChild(node('p', 'notice error', poolFailure()));
+    if (!state.pool) { if (!poolFailure) target.appendChild(node('p', 'muted', t('Loading pool…'))); return; }
+    if (!state.pool.groups.length) { target.appendChild(node('p', 'muted', t('No shared accounts yet. Your private accounts will also appear here.'))); return; }
+    state.pool.groups.forEach(function (group) {
+      var section = node('section', 'pool-group'), heading = node('div', 'pool-heading');
+      var label = group.provider === 'anthropic' ? 'Claude' : group.provider === 'codex' ? 'ChatGPT/Codex' : group.provider === 'grok' ? 'Grok' : group.provider === 'backend' ? t('Other') : t('API keys');
+      heading.appendChild(node('h3', '', label));
+      var totals = node('div', 'pool-totals');
+      group.totals.forEach(function (total) { totals.appendChild(poolBar(total.remaining, total.nextResetAt, null, poolWindowLabel(total), true)); });
+      heading.appendChild(totals); section.appendChild(heading);
+      if (group.provider === 'grok') section.appendChild(node('p', 'muted', t('No usage signal from this provider')));
+      var scroll = node('div', 'table-scroll'), table = node('table', 'pool-accounts');
+      table.appendChild(node('caption', '', t('{provider} pool accounts', { provider: label })));
+      var head = node('thead'), headers = node('tr');
+      [t('Owner'), t('Plan'), t('Sharing')].concat(group.totals.map(poolWindowLabel), [t('State')]).forEach(function (label) { var cell = node('th', '', label); cell.scope = 'col'; headers.appendChild(cell); });
+      head.appendChild(headers); table.appendChild(head);
+      var body = node('tbody');
+      /** @type {Map<string, number>} */
+      var duplicates = new Map();
+      group.accounts.forEach(function (account) {
+        var row = node('tr'), identity = JSON.stringify([account.owner, account.plan]), count = (duplicates.get(identity) || 0) + 1;
+        duplicates.set(identity, count);
+        var owner = node('th', '', (account.sharing === 'team' ? t('team') : account.owner) + (count > 1 ? ' #' + number(count) : '')); owner.scope = 'row';
+        if (account.ownerIsViewer) owner.appendChild(node('small', 'muted', t('yours')));
+        if (!account.usable) owner.appendChild(node('small', 'muted', t('not in your access')));
+        row.appendChild(owner); row.appendChild(node('td', '', account.plan || '—'));
+        row.appendChild(node('td', '', account.sharing === 'private' ? t('Private') : account.sharing === 'pool' ? t('Pool') : t('Team')));
+        group.totals.forEach(function (total) {
+          var cell = node('td'), window = account.windows.find(function (window) { return window.key === total.key; });
+          if (window) cell.appendChild(poolBar(window.remaining, window.resetAt, window.seenAt, poolWindowLabel(window)));
+          else cell.textContent = '—';
+          row.appendChild(cell);
+        });
+        var stateLabel = account.state === 'disabled' ? t('Disabled') : account.state === 'limited' ? t('Limited') : account.state === 'error' ? t('Error') : t('Ready');
+        row.appendChild(node('td', account.state === 'ok' ? 'ok' : account.state === 'disabled' ? 'muted' : account.state === 'error' ? 'badt' : 'warnt', stateLabel));
+        body.appendChild(row);
+      });
+      table.appendChild(body); scroll.appendChild(table); section.appendChild(scroll); target.appendChild(section);
+    });
   }
   /** Called by the fleet card renderer; ownership metadata comes from the account API. @param {WorkspaceAccount} account @param {any} target */
   function accountControls(account, target) {
@@ -1052,12 +1168,13 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
       $('connection').textContent = t('Updated at {time}', { time: i18n.date(state.lastGood, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) });
     }
     $('historyScope').querySelectorAll('option').forEach(/** @param {any} option */ function (option) { if (option.value === 'clients') option.textContent = t('Clients'); });
-    renderPreview(); renderHistory(); renderTeam(); renderMemberLabels(); renderConfirmation(); renderMyAccounts(); renderAccountLogin(); renderAccountRemoval();
+    renderPreview(); renderHistory(); renderTeam(); renderMemberLabels(); renderConfirmation(); renderMyAccounts(); renderPool(); renderAccountLogin(); renderAccountRemoval();
     Object.keys(notices).forEach(function (id) { $(id).textContent = notices[id](); });
     if (focusKey) document.querySelectorAll('[data-workspace-focus]').forEach(function (element) { if (element.getAttribute('data-workspace-focus') === focusKey) element.focus(); });
   }
   i18n.onChange(refreshPresentation);
   window.addEventListener('hashchange', navigate);
+  document.addEventListener?.('visibilitychange', function () { loadPool(); });
   window.RelayWorkspace = { update: update, failed: failed, signedOut: signedOut, accountControls: accountControls };
   navigate();
 }

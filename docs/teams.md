@@ -427,6 +427,10 @@ npx github:sep1ol/relaycrew member enable <account-id>
 npx github:sep1ol/relaycrew member remove <account-id>
 ```
 
+### See the pool
+
+The dashboard's **Pool** section, under **My accounts**, shows every member the remaining 5-hour, weekly and per-model quota of the team's shared accounts: operator accounts and accounts other members set to `--pool`, labelled by owner and plan, never by email. Your own private accounts appear there as yours; other members' private accounts do not appear at all. Accounts outside your grant are marked "not in your access". Grok shows no usage signal. The same section sits above the fleet cards in the administrator's Accounts view. The data comes from `GET /relaycrew/accounts/pool`, which member keys may call; see [ADR-004](adr/004-pool-view.md).
+
 Members see only their own rows. Administrators can list all rows with the same `member accounts` command and the administrator key. They see each owner and sharing setting through the account and team APIs. They can disable, enable or remove owned rows, but cannot route to private accounts. Only the owner can change sharing, and an owner cannot undo an administrator's disable. Owned credentials are excluded from callback.net sync. A provider account already held by another owner cannot be added again.
 
 Revoke members with `relaycrew team revoke <name>`. Do not hand-delete member entries or reuse their names: ownership follows the permanent member name. Revocation keeps that attribution so an administrator can manage the remaining rows.

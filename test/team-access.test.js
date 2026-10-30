@@ -618,8 +618,24 @@ test('owner access overrides grants while private accounts exclude every other i
     assert.deepEqual(identities.map(identity => teamAllowsAccount(proxy, identity, { id: 'owned', owner })), expected);
   }
   assert.equal(teamMemberPath('GET', '/relaycrew/accounts'), true);
+  assert.equal(teamMemberPath('GET', '/teamrouter/accounts/pool'), true);
   assert.equal(teamMemberPath('POST', '/teamrouter/accounts/login/complete'), true);
-  for (const [method, path] of [['POST', '/relaycrew/accounts'], ['GET', '/relaycrew/accounts/login'], ['POST', '/relaycrew/accounts/anything'], ['GET', '/relaycrew/status']]) assert.equal(teamMemberPath(method, path), false);
+  for (const [method, path] of [['POST', '/relaycrew/accounts'], ['POST', '/relaycrew/accounts/pool'], ['GET', '/relaycrew/accounts/login'], ['POST', '/relaycrew/accounts/anything'], ['GET', '/relaycrew/status']]) assert.equal(teamMemberPath(method, path), false);
+});
+
+test('member pool lists shared accounts by owner without names, IDs or private rows of others', { timeout: 10000 }, async t => {
+  const f = await fixture(t);
+  const [alpha, beta] = f.am.accounts;
+  Object.assign(alpha, { name: 'bob@example.com', owner: { name: 'bob', sharing: 'private' } });
+  Object.assign(beta, { name: 'bob-second@example.com', owner: { name: 'bob', sharing: 'pool' } });
+  Object.assign(beta.quota, { unified5h: 0.25, unified5hReset: Date.now() + 3600_000 });
+  const reply = await request(f.port, { method: 'GET', path: '/relaycrew/accounts/pool' });
+  assert.equal(reply.status, 200);
+  assert.equal(reply.headers['cache-control'], 'no-store');
+  const [claude] = reply.json().groups;
+  assert.deepEqual(claude.accounts.map(account => [account.owner, account.sharing, account.usable]), [['bob', 'pool', true], ['team', 'team', true]]);
+  assert.equal(claude.accounts[0].windows[0].remaining, 0.75);
+  for (const secret of ['@example.com', 'account-', 'alpha', 'beta', 'gamma', 'upstream-', 'refresh-', ADMIN, ALICE, BOB]) assert.ok(!reply.text.includes(secret), secret);
 });
 
 test('access refresh aborts streams on disable and when a pooled account becomes private', () => {

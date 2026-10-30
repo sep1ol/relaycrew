@@ -78,3 +78,7 @@ relaycrew member share <account-id> --private|--pool
 - **A new stable member UUID as the owner key.** Rejected for now: member names are already permanent and unique, and revoke keeps them. Hand-deleting a member and re-adding the same name would hand over their rows; the docs say to revoke, not delete.
 - **The member's CLI runs OAuth locally and uploads finished tokens.** Rejected: the dashboard would have no path, and the gateway would accept arbitrary credentials over HTTP.
 - **Restartable pending logins stored on disk.** Rejected: it would put PKCE secrets on disk to save a member one retry after a restart.
+
+## Implementation notes
+
+- 2026-10-30: [ADR-004](004-pool-view.md) amends "Members never see fleet status": members see the pool's remaining quota through `GET /relaycrew/accounts/pool`, nothing else of the fleet.

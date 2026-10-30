@@ -109,7 +109,7 @@ export function teamInferencePath(method, url) {
 export function teamMemberPath(method, url) {
   const classified = classificationPath(url);
   const path = canonicalControlUrl(classified) ?? classified;
-  if (method === 'GET') return path === '/relaycrew/accounts';
+  if (method === 'GET') return path === '/relaycrew/accounts' || path === '/relaycrew/accounts/pool';
   return method === 'POST' && ['login', 'login/complete', 'login/cancel', 'update', 'remove'].some(action => path === `/relaycrew/accounts/${action}`);
 }
 

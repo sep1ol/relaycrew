@@ -24,8 +24,9 @@ import { forwardRefusal, guardedLookup, FORBIDDEN_FORWARD } from './forward-targ
 import { renderDashboardHtml, dashboardCsp } from './dashboard.js';
 import { createBuildInfo } from './build-info.js';
 import { currentVersion, resolveVersionLabel } from './updater.js';
-import { handleTeamRequest } from './team-api.js';
+import { handleTeamRequest, teamJson } from './team-api.js';
 import { handleAccountRequest } from './account-api.js';
+import { buildPoolView } from './pool-view.js';
 import { httpClientKey, forwardedBearerToken } from './http-client-auth.js';
 import { handleUsageHistoryRequest } from './usage-history.js';
 import { createUsageRecorder, resolveUsageDimensions, usageDimensionHeaderNames } from './client-usage.js';
@@ -36,7 +37,7 @@ import { codexSpentWindows, isAccountWideCodexWindow } from './codex-quota.js';
 import { atomicConfigUpdate } from './config.js';
 import { ConfigOpError, setThreshold, thresholdRatio } from './config-ops.js';
 import { envVar, canonicalControlUrl, isControlPath } from './brand.js';
-import { authenticateTeam, validateTeamConfig, teamAccessFor, teamExclusions, teamError, teamInferencePath, teamMemberPath } from './team-access.js';
+import { authenticateTeam, validateTeamConfig, teamAccessFor, teamExclusions, teamError, teamIdentityValid, teamInferencePath, teamMemberPath } from './team-access.js';
 /** @typedef {import('./types.js').CodedError} CodedError */
 
 
@@ -565,7 +566,7 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null,
           return;
         }
         if (!teamInferencePath(req.method, req.url) && !teamMemberPath(req.method, req.url)) {
-          teamError(res, 403, 'Members may access inference endpoints, /relaycrew/me and their account routes only');
+          teamError(res, 403, 'Members may access inference endpoints, /relaycrew/me, their account routes and the pool only');
           return;
         }
       }
@@ -653,6 +654,15 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null,
           }));
           return;
         }
+      }
+
+      if (req.method === 'GET' && classificationPath(req.url) === '/relaycrew/accounts/pool') {
+        if (config.proxy?.teamMode !== true) { teamJson(res, 404, { ok: false, error: 'Not found.' }); return; }
+        if (!req.tcTeamIdentity || !teamIdentityValid(config.proxy, req.tcTeamIdentity)) { teamJson(res, 401, { ok: false, error: 'Team authentication required.' }); return; }
+        accountManager.sweepExpiredQuotas();
+        const accounts = accountManager.accounts.map((/** @type {Record<string, any>} */ account) => ({ ...account, unavailable: accountManager.unavailableReason(account) }));
+        teamJson(res, 200, buildPoolView({ accounts, proxy: config.proxy, identity: req.tcTeamIdentity, now: Date.now() }));
+        return;
       }
 
       if (await handleTeamRequest(req, res, { config, hooks, clientUsage, readBody: readControlBody })) return;
