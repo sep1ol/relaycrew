@@ -22,6 +22,8 @@ import { isRoutingFailure, describeRouting } from './account-routing.js';
 import { safeLine } from './safe-text.js';
 import { forwardRefusal, guardedLookup, FORBIDDEN_FORWARD } from './forward-target.js';
 import { renderDashboardHtml, dashboardCsp } from './dashboard.js';
+import { createBuildInfo } from './build-info.js';
+import { currentVersion, resolveVersionLabel } from './updater.js';
 import { handleTeamRequest } from './team-api.js';
 import { handleAccountRequest } from './account-api.js';
 import { httpClientKey, forwardedBearerToken } from './http-client-auth.js';
@@ -466,6 +468,11 @@ export function callerView(client) {
  */
 export function createProxyServer(accountManager, config, hooks = {}, sx = null, clientUsage = null, dimensionUsage = null, { bindHost = null, logins = null } = {}) {
   validateTeamConfig(config.proxy);
+  const startedAt = Date.now();
+  const revision = envVar('REVISION');
+  const buildInfo = resolveVersionLabel().then(({ label, git, revision: gitRevision }) => createBuildInfo({
+    version: currentVersion(), revision, gitRevision, label: git ? label : null, startedAt, node: process.version,
+  }));
   const boundHost = () => bindHost || config.proxy?.host;
   const upstream = config.upstream || 'https://api.anthropic.com';
   const holdMs = (config.holdSeconds || 0) * 1000;
@@ -515,6 +522,20 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null,
           'X-Content-Type-Options': 'nosniff',
         });
         res.end(renderDashboardHtml());
+        return;
+      }
+
+      // Public liveness and build identity contain no account or member data.
+      if (pathname === '/relaycrew/health' || pathname === '/relaycrew/version') {
+        const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.writeHead(405, { ...headers, Allow: 'GET, HEAD' });
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+        const info = await buildInfo;
+        res.writeHead(200, headers);
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify(pathname === '/relaycrew/health' ? info.health(Date.now()) : info.version));
         return;
       }
 

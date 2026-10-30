@@ -167,7 +167,7 @@ sudo docker compose ps
 sudo docker compose logs --tail 50 gateway
 ```
 
-The container should become healthy after its startup interval. Its health check uses the administrator key from the mounted configuration. To follow logs, run `sudo docker compose logs --follow gateway`. To restart, run `sudo docker compose restart gateway`.
+The container should become healthy after its startup interval. Its health check calls `/relaycrew/health` without a key and checks HTTP server liveness only. To follow logs, run `sudo docker compose logs --follow gateway`. To restart, run `sudo docker compose restart gateway`.
 
 Define the following helper in the same shell for commands against the running container:
 
@@ -225,6 +225,14 @@ Caddy obtains and renews the public certificate when [automatic HTTPS requiremen
 Use `https://gateway.example.com` instead of the tunnel's HTTP origin in the remaining steps. The gateway page is public; its data and controls require authentication. Publishing the page does not grant administrator access.
 
 ## 4. Verify the gateway and dashboard
+
+Confirm the deployed build without a key (replace `<gateway>` with your gateway hostname):
+
+```bash
+curl -s https://<gateway>/relaycrew/version
+```
+
+Check `version`, `revision`, and the static `features` list (`member-accounts`, `grok`). `revision` is null when the build has no revision metadata. `/relaycrew/health` is also public and reports HTTP server liveness, not provider availability or account readiness. These routes expose no account, member, or quota data.
 
 On the VPS, verify that an unauthenticated fleet request is refused:
 
@@ -504,12 +512,18 @@ For Compose:
 cd /opt/relaycrew
 sudo git rev-parse HEAD
 sudo git pull --ff-only origin main
-sudo docker compose build
+sudo RELAYCREW_REVISION=$(git rev-parse --short HEAD) docker compose build
 sudo docker compose up -d
 sudo docker compose ps
 ```
 
-Take a backup first and repeat the dashboard and member checks after upgrading. If an upgrade fails, stop the gateway, check out the recorded revision in the source checkout, and restart the native service or rebuild and start Compose. Keep the current data unless a documented migration specifically requires restoring a backup. Restarting or rolling back code interrupts active requests.
+After either upgrade, confirm the running revision without a key:
+
+```bash
+curl -s https://<gateway>/relaycrew/version
+```
+
+Compare `revision` with the updated checkout's short SHA. Take a backup first and repeat the dashboard and member checks after upgrading. If an upgrade fails, stop the gateway, check out the recorded revision in the source checkout, and restart the native service or rebuild and start Compose with that revision's build argument. Keep the current data unless a documented migration specifically requires restoring a backup. Restarting or rolling back code interrupts active requests.
 
 ### Troubleshoot an installation
 

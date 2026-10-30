@@ -57,22 +57,25 @@ export function currentVersion(root = packageRoot()) {
  * @param {Object} [opts]
  * @param {string} [opts.root]
  * @param {(file: string, args: string[], options: { cwd: string, encoding: 'utf8', timeout: number }) => Promise<{ stdout: string }>} [opts.exec]
- * @returns {Promise<{ label: string, git: boolean }>}
+ * @returns {Promise<{ label: string, git: boolean, revision: string|null }>}
  */
 export async function resolveVersionLabel({ root = packageRoot(), exec = pexec } = {}) {
   const git = existsSync(join(root, '.git'));
+  let label = '';
+  let revision = null;
   if (git) {
     /** @type {{ cwd: string, encoding: 'utf8', timeout: number }} */
     const opts = { cwd: root, encoding: 'utf8', timeout: 2000 };
     const probes = [['describe', '--tags', '--exact-match', 'HEAD'], ['rev-parse', '--short', 'HEAD']];
     for (const args of probes) {
       try {
-        const label = safeLine((await exec('git', args, opts)).stdout, LABEL_MAX);
-        if (label) return { label, git };
+        const value = safeLine((await exec('git', args, opts)).stdout, LABEL_MAX);
+        if (args[0] === 'rev-parse') revision = value || null;
+        if (!label) label = value;
       } catch { /* not on a tag, a shallow or broken checkout, or no git binary */ }
     }
   }
-  return { label: safeLine(currentVersion(root) || 'local', LABEL_MAX), git };
+  return { label: label || safeLine(currentVersion(root) || 'local', LABEL_MAX), git, revision };
 }
 
 /**

@@ -1,6 +1,9 @@
 services:
   gateway:
-    build: .
+    build:
+      context: .
+      args:
+        VCS_REF: ${RELAYCREW_REVISION:-unknown}
     restart: unless-stopped
     ports:
       - "127.0.0.1:3456:3456"
