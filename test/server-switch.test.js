@@ -238,10 +238,10 @@ test('a successful switch is logged, and says so when the target is ineligible',
 
 // Loopback is exempt from the proxy-key gate (that is what makes the fetch-based
 // tests above work), so the gate itself has to be exercised with a remote peer.
-function remoteRequest(server, { headers = {}, body = '{}' } = {}) {
+function remoteRequest(server, { headers = {}, body = '{}', method = 'POST', path = '/relaycrew/switch' } = {}) {
   const req = Readable.from([Buffer.from(body)]);
-  req.method = 'POST';
-  req.url = '/relaycrew/switch';
+  req.method = method;
+  req.url = path;
   req.headers = headers;
   req.socket = { remoteAddress: '203.0.113.9' };
 
@@ -255,6 +255,19 @@ function remoteRequest(server, { headers = {}, body = '{}' } = {}) {
   server.emit('request', req, res);
   return finished.then(() => ({ status: res.status, body: JSON.parse(res.chunks || '{}') }));
 }
+
+test('public health and version work without a key in team mode while status stays private', async () => {
+  const server = createProxyServer(new AccountManager(ACCTS), { proxy: { apiKey: 'tc-test', teamMode: true, clientKeys: [] } });
+  try {
+    const publicReplies = await Promise.all(['/relaycrew/health', '/relaycrew/version'].map(path => remoteRequest(server, { method: 'GET', path })));
+    assert.deepEqual(publicReplies.map(reply => ({ status: reply.status, hasAccountName: ACCTS.some(account => JSON.stringify(reply.body).includes(account.name)) })), [
+      { status: 200, hasAccountName: false }, { status: 200, hasAccountName: false },
+    ]);
+    assert.equal((await remoteRequest(server, { method: 'GET', path: '/relaycrew/status' })).status, 401);
+  } finally {
+    server.close();
+  }
+});
 
 test('a remote client without the proxy key cannot switch', async () => {
   await withServer(async (am, port, server) => {

@@ -287,7 +287,7 @@ test('resolveVersionLabel prefers the tag HEAD sits on', async () => {
   const root = labelRoot({ git: true, version: '1.1.20' });
   try {
     const exec = gitStub({ describe: 'v1.1.20\n', 'rev-parse': 'b8bbfcc\n' });
-    assert.deepEqual(await resolveVersionLabel({ root, exec }), { label: 'v1.1.20', git: true });
+    assert.deepEqual(await resolveVersionLabel({ root, exec }), { label: 'v1.1.20', git: true, revision: 'b8bbfcc' });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -295,7 +295,7 @@ test('resolveVersionLabel falls back to the short sha off a tag', async () => {
   const root = labelRoot({ git: true, version: '1.1.20' });
   try {
     const exec = gitStub({ 'rev-parse': 'b8bbfcc\n' });
-    assert.deepEqual(await resolveVersionLabel({ root, exec }), { label: 'b8bbfcc', git: true });
+    assert.deepEqual(await resolveVersionLabel({ root, exec }), { label: 'b8bbfcc', git: true, revision: 'b8bbfcc' });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -315,7 +315,7 @@ test('resolveVersionLabel reads package.json outside a checkout, without running
   const seen = [];
   try {
     const label = await resolveVersionLabel({ root, exec: gitStub({ describe: 'v9.9.9\n' }, seen) });
-    assert.deepEqual(label, { label: '1.1.20-pr378', git: false });
+    assert.deepEqual(label, { label: '1.1.20-pr378', git: false, revision: null });
     assert.equal(seen.length, 0, 'no git process for an npm install');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -325,14 +325,14 @@ test('resolveVersionLabel reads package.json outside a checkout, without running
 test('resolveVersionLabel falls through to package.json when git answers nothing', async () => {
   const root = labelRoot({ git: true, version: '1.1.20' });
   try {
-    assert.deepEqual(await resolveVersionLabel({ root, exec: gitStub({}) }), { label: '1.1.20', git: true });
+    assert.deepEqual(await resolveVersionLabel({ root, exec: gitStub({}) }), { label: '1.1.20', git: true, revision: null });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('resolveVersionLabel reports local when nothing identifies the copy', async () => {
   const root = labelRoot();
   try {
-    assert.deepEqual(await resolveVersionLabel({ root, exec: gitStub({}) }), { label: 'local', git: false });
+    assert.deepEqual(await resolveVersionLabel({ root, exec: gitStub({}) }), { label: 'local', git: false, revision: null });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
