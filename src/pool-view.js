@@ -6,7 +6,7 @@ import { teamAllowsAccount } from './team-access.js';
 /**
  * The member-facing projection. None of its keys identify configured accounts.
  * @typedef {'anthropic'|'codex'|'grok'|'apikey'|'backend'} PoolProvider
- * @typedef {'fiveHour'|'weekly'|`weekly:${string}`|'tokens'|'requests'|'monthly'} PoolWindowKey
+ * @typedef {'fiveHour'|'weekly'|`weekly:${string}`|'tokens'|'requests'|'monthly'|'plan'} PoolWindowKey
  * @typedef {{key: PoolWindowKey, label: string, remaining: number|null, resetAt: number|null, seenAt: number|null}} PoolWindow
  * @typedef {{key: string, owner: string, ownerIsViewer: boolean, plan: string|null, sharing: 'team'|'pool'|'private', usable: boolean, state: 'ok'|'disabled'|'limited'|'error', windows: PoolWindow[]}} PoolAccount
  * @typedef {{key: PoolWindowKey, label: string, remaining: number|null, accounts: number, nextResetAt: number|null}} PoolTotal
@@ -78,16 +78,20 @@ function accountWindows(account, provider, now) {
     if (showWeeklyRow(quota)) add('weekly', 'Week', quota.unified7d, quota.unified7dReset, quota.unified7dSeenAt);
     if (provider === 'codex') {
       for (const [slug, bucket] of Object.entries(/** @type {Record<string, any>} */ (quota.codexModelBuckets || {}))) {
-        add(`weekly:${slug}`, bucket.name || slug, bucket.utilization, bucket.resetAt, bucket.seenAt);
+        if (bucket) add(`weekly:${slug}`, bucket.name || slug, bucket.utilization, bucket.resetAt, bucket.seenAt);
       }
     } else {
-      for (const [family, bucket] of Object.entries(/** @type {Record<string, any>} */ (quota.scopedWeekly || {})).sort(([a], [b]) => a.localeCompare(b))) {
-        if (finite(bucket.utilization) !== null) add(`weekly:${family}`, family.charAt(0).toUpperCase() + family.slice(1), bucket.utilization, bucket.resetAt, null);
-      }
+      // The dedicated fields carry seenAt; scopedWeekly holds the same value without one.
+      /** @type {Map<string, [unknown, unknown, unknown]>} */
+      const families = new Map();
       for (const [family, field] of [['sonnet', 'unified7dSonnet'], ['fable', 'unified7dFable']]) {
-        if (finite(quota[field]) !== null && !windows.some(window => window.key === `weekly:${family}`)) {
-          add(`weekly:${family}`, family.charAt(0).toUpperCase() + family.slice(1), quota[field], quota[field + 'Reset'], quota[field + 'SeenAt']);
-        }
+        if (finite(quota[field]) !== null) families.set(family, [quota[field], quota[field + 'Reset'], quota[field + 'SeenAt']]);
+      }
+      for (const [family, bucket] of Object.entries(/** @type {Record<string, any>} */ (quota.scopedWeekly || {}))) {
+        if (!families.has(family) && finite(bucket?.utilization) !== null) families.set(family, [bucket.utilization, bucket.resetAt, null]);
+      }
+      for (const [family, reading] of [...families].sort(([a], [b]) => a.localeCompare(b))) {
+        add(`weekly:${family}`, family.charAt(0).toUpperCase() + family.slice(1), ...reading);
       }
     }
   } else if (provider === 'backend') {
@@ -95,6 +99,7 @@ function accountWindows(account, provider, now) {
       const bucket = quota.backend?.windows?.[key];
       if (bucket) add(key, label, bucket.utilization, bucket.resetAt, quota.backend.at);
     }
+    if (!windows.length && finite(quota.backend?.utilization) !== null) add('plan', 'Plan', quota.backend.utilization, null, quota.backend.at);
   } else if (provider === 'apikey') {
     for (const [key, label] of /** @type {['tokens'|'requests', string][]} */ ([['tokens', 'Tokens'], ['requests', 'Requests']])) {
       const limit = finite(quota[key + 'Limit']), remaining = finite(quota[key + 'Remaining']);
@@ -115,6 +120,10 @@ export function buildPoolView({ accounts, proxy, identity, now }) {
   const groups = new Map();
   /** @type {Map<PoolAccount, number>} */
   const weights = new Map();
+  // Totals count accounts limited by quota (their readings are the capacity) and
+  // skip only those whose windows say nothing: disabled, in error, or operator-capped.
+  /** @type {Set<PoolAccount>} */
+  const counted = new Set();
   let index = 0;
   for (const account of accounts) {
     const ownerIsViewer = !!account.owner && identity?.kind === 'member' && account.owner.name === identity.name;
@@ -131,6 +140,7 @@ export function buildPoolView({ accounts, proxy, identity, now }) {
       usable: teamAllowsAccount(proxy, identity, account), state: accountState(account, now), windows: accountWindows(account, provider, now) };
     group.accounts.push(row);
     weights.set(row, provider === 'anthropic' ? quotaTier(account).weight ?? 1 : 1);
+    if (row.state !== 'disabled' && row.state !== 'error' && !['capped', 'spend-capped'].includes(account.unavailable)) counted.add(row);
   }
   for (const group of groups.values()) {
     const windows = new Map(group.accounts.flatMap(account => account.windows.map(window => [window.key, window])));
@@ -139,7 +149,7 @@ export function buildPoolView({ accounts, proxy, identity, now }) {
       /** @type {number|null} */
       let nextResetAt = null;
       for (const account of group.accounts) {
-        if (account.state !== 'ok') continue;
+        if (!counted.has(account)) continue;
         const reading = account.windows.find(window => window.key === key);
         if (reading?.remaining == null) continue;
         const weight = weights.get(account) ?? 1;

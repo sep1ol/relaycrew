@@ -288,7 +288,8 @@ td .button-row{flex-wrap:nowrap}
 .pool-accounts td:first-child{white-space:normal;overflow-wrap:anywhere;min-width:100px;max-width:220px}
 .pool-accounts th[scope="row"]{font-size:11px;white-space:normal;overflow-wrap:anywhere;min-width:100px;max-width:220px}
 .pool-accounts th[scope="row"] small{display:block;font-weight:400}
-.pool-accounts td{vertical-align:top}
+.pool-accounts td,.pool-accounts tbody th{vertical-align:top;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
+.pool-accounts tbody tr:last-child th{border-bottom:none}
 .pool-accounts caption{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .button-row{display:flex;gap:7px;flex-wrap:wrap}
 .button-row button{font-size:10px;padding:6px 8px}

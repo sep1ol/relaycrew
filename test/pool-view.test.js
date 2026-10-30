@@ -14,7 +14,7 @@ const accounts = () => [
     unified7d: 0.5, unified7dReset: NOW + 48 * HOUR, unified7dSeenAt: NOW - 60_000,
     unified7dSonnet: 0.875, unified7dSonnetReset: NOW + 48 * HOUR, unified7dSonnetSeenAt: NOW - 60_000,
     unified7dFable: null, unified7dFableReset: null,
-    scopedWeekly: { opus: { utilization: 0.75, resetAt: NOW + 24 * HOUR } },
+    scopedWeekly: { opus: { utilization: 0.75, resetAt: NOW + 24 * HOUR }, sonnet: { utilization: 0.875, resetAt: NOW + 48 * HOUR } },
   } },
   { id: 'claude-marina', name: 'marina@example.com', type: 'oauth', provider: 'anthropic', owner: { name: 'marina', sharing: 'pool' }, rateLimitTier: 'default_claude_max_x5', quota: {
     unified5h: 0.5, unified5hReset: NOW + 2 * HOUR, unified7d: 0.5, unified7dReset: NOW - 1,
@@ -51,7 +51,7 @@ test('pool view projects shared quota per provider without identifying accounts'
     { key: 'weekly', label: 'Week', remaining: 0.5, resetAt: NOW + 48 * HOUR, seenAt: NOW - 60_000 },
     { key: 'weekly:opus', label: 'Opus', remaining: 0.25, resetAt: NOW + 24 * HOUR, seenAt: null },
     { key: 'weekly:sonnet', label: 'Sonnet', remaining: 0.125, resetAt: NOW + 48 * HOUR, seenAt: NOW - 60_000 },
-  ], 'dedicated model windows only, never the shared-weekly fallback');
+  ], 'dedicated model windows only, never the shared-weekly fallback; the dedicated Sonnet reading keeps its age over the scopedWeekly copy');
   assert.deepEqual(claude.accounts[1].windows.find(window => window.key === 'weekly'), { key: 'weekly', label: 'Week', remaining: null, resetAt: null, seenAt: null }, 'an expired window reads as unknown');
   assert.deepEqual(claude.totals.map(total => [total.key, total.remaining, total.accounts, total.nextResetAt]), [
     ['fiveHour', (0.75 * 20 + 0.5 * 5) / 25, 2, NOW + HOUR],
@@ -76,4 +76,30 @@ test('pool view for the administrator hides every private account and never mark
   const view = buildPoolView({ accounts: accounts(), proxy, identity: admin, now: NOW });
   assert.deepEqual(view.groups[0].accounts.map(account => [account.owner, account.ownerIsViewer, account.usable]), [['team', false, true], ['marina', false, true], ['carol', false, true]]);
   assert.ok(!JSON.stringify(view).includes('alice'));
+});
+
+test('totals count quota-limited accounts, skip operator caps, read a bare backend utilization and survive null quota entries', () => {
+  const tier = 'default_claude_max_20x';
+  const view = buildPoolView({ accounts: [
+    { id: 'claude-spent', type: 'oauth', provider: 'anthropic', rateLimitTier: tier, unavailable: 'quota', quota: {
+      unified5h: 0.99, unified5hReset: NOW + HOUR, unified7d: 0.1, unified7dReset: NOW + 48 * HOUR, scopedWeekly: { opus: null },
+    } },
+    { id: 'claude-fresh', type: 'oauth', provider: 'anthropic', rateLimitTier: tier, quota: { unified5h: 0.4, unified5hReset: NOW + HOUR, unified7d: 0.5, unified7dReset: NOW + 48 * HOUR } },
+    { id: 'claude-capped', type: 'oauth', provider: 'anthropic', rateLimitTier: tier, unavailable: 'capped', quota: { unified5h: 0, unified5hReset: NOW + HOUR, unified7d: 0, unified7dReset: NOW + 48 * HOUR } },
+    { id: 'codex-ops', type: 'oauth', provider: 'codex', quota: { unified5h: 0.5, codexModelBuckets: { 'gpt-5-codex': null } } },
+    { id: 'backend-ops', type: 'apikey', upstream: 'https://api.example.test', quota: { backend: { label: 'Plan', text: 'day 90% · week 40%', utilization: 0.9, at: NOW - HOUR } } },
+  ], proxy, identity: alice, now: NOW });
+  const [claude, codex, backend] = view.groups;
+
+  assert.deepEqual(claude.accounts.map(account => account.state), ['limited', 'ok', 'limited']);
+  assert.deepEqual(claude.totals.map(total => [total.key, total.remaining, total.accounts]), [
+    ['fiveHour', ((1 - 0.99) * 20 + (1 - 0.4) * 20) / 40, 2],
+    ['weekly', ((1 - 0.1) * 20 + (1 - 0.5) * 20) / 40, 2],
+  ], 'the account out of quota is counted, the operator-capped one is not');
+
+  assert.deepEqual(codex.accounts[0].windows.map(window => window.key), ['fiveHour', 'weekly'], 'a null model bucket is skipped');
+
+  assert.deepEqual(backend.accounts[0].windows, [{ key: 'plan', label: 'Plan', remaining: 1 - 0.9, resetAt: null, seenAt: NOW - HOUR }]);
+  assert.deepEqual(backend.totals.map(total => [total.key, total.remaining, total.accounts]), [['plan', 1 - 0.9, 1]]);
+  assert.ok(!JSON.stringify(view).includes('day 90%'), 'backend.text is never forwarded');
 });

@@ -610,6 +610,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     if (window.key === 'tokens') return t('Tokens');
     if (window.key === 'requests') return t('Requests');
     if (window.key === 'monthly') return t('Month');
+    if (window.key === 'plan') return t('Plan');
     return t('Week · {model}', { model: window.label });
   }
   /** @param {number} milliseconds */
