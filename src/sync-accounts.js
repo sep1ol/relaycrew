@@ -97,6 +97,11 @@ export async function syncAccountsFromDisk(diskConfig, memConfig, accountManager
     const mgr = accountManager.accounts[mgrIdx];
     mgr.owner = diskAcct.owner ? { ...diskAcct.owner } : null;
     mgr.disabledBy = diskAcct.disabledBy;
+    if (mgr.provider === 'grok') {
+      mgr.userId = diskAcct.userId || null;
+      mgr.teamId = diskAcct.teamId || null;
+      mgr.email = diskAcct.email || null;
+    }
 
     // Backfill org identity and pick up renames/priority onto the running
     // account (e.g. after disk-side org disambiguation or a `priority` change).

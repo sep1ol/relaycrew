@@ -49,3 +49,27 @@ test('member CLI cancels on EOF and rejects ambiguous or unsupported login flags
     ['login', '--claude', '--private', '--pool'], ['login', '--claude', '--private', '--name', 'alice'],
   ]) await assert.rejects(memberCommand(args, f.options), /Usage: relaycrew member/);
 });
+
+test('member Grok login prints the device code and repeats 202 completion without a paste', async () => {
+  const calls = [];
+  let text = '', polls = 0;
+  const client = new GatewayClient({ baseUrl: 'https://gateway.invalid', key: 'member-key', fetchImpl: async (url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push({ url, body });
+    if (url.endsWith('/login')) return { ok: true, status: 201, json: async () => ({ ok: true, login: { id: 'device-login', provider: 'grok', paste: 'none', userCode: 'ABCD-EFGH', url: 'https://accounts.x.ai/device' } }) };
+    assert.ok(url.endsWith('/complete'));
+    assert.deepEqual(body, { id: 'device-login' });
+    if (++polls < 3) return { ok: true, status: 202, json: async () => ({ ok: true, pending: true }) };
+    return { ok: true, status: 200, json: async () => ({ ok: true, action: 'added', account: { id: 'account-id', name: 'Grok seat', provider: 'grok', sharing: 'private' } }) };
+  } });
+  await memberCommand(['login', '--grok', '--private'], {
+    client, input: Readable.from([]), output: new Writable({ write(chunk, _encoding, done) { text += chunk; done(); } }),
+    env: { RELAYCREW_REMOTE: '1' }, open: () => assert.fail('remote browser must not open'),
+  });
+  assert.deepEqual(calls[0].body, { provider: 'grok', sharing: 'private' });
+  assert.equal(polls, 3);
+  assert.match(text, /https:\/\/accounts.x.ai\/device/);
+  assert.match(text, /ABCD-EFGH/);
+  assert.match(text, /Added "Grok seat" \(grok, private\)/);
+  assert.equal(text.includes('Paste'), false);
+});

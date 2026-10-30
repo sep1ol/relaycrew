@@ -10,6 +10,7 @@ Choose a login method explicitly:
 | --- | --- |
 | `relaycrew login --claude` | Claude subscription authorization |
 | `relaycrew login --codex` | ChatGPT/Codex subscription authorization |
+| `relaycrew login --grok` | Grok subscription device-code authorization |
 | `relaycrew login --claude-api` | Anthropic API key |
 | `relaycrew login --openai-api` | OpenAI API key for Responses requests |
 
@@ -320,6 +321,20 @@ token. See [Syncing accounts across machines](#syncing-accounts-across-machines-
 Every account entry carries an `id`, added the first time the config is read and written back on the next save. It is what ties an entry to the running account built from it: entries without a usable credential are skipped at startup, so an entry's place in the file is not the account's place in the fleet, and a token refreshed for one account would otherwise be recorded against another.
 
 Hand edits are fine. Leave the `id` alone and it keeps working; delete it and a new one is issued on the next read. If you copy an account block to make a second entry, the duplicated `id` is spotted on the next read and the later of the two gets a fresh one.
+
+## Grok accounts
+
+```bash
+relaycrew login --grok
+```
+
+Open the printed verification URL on any device and confirm the user code. The command waits and saves the account when authorized; no callback listener or pasted credential is needed. Use `--no-browser` to print the link without opening a browser and `--name <label>` to choose a display name. Over SSH no browser is opened. The TUI's `l` key uses the same device flow for an existing Grok row. This flow never reads `~/.grok/auth.json`.
+
+Rows use `type: "oauth", provider: "grok"` with `accessToken`, `refreshToken`, `expiresAt`, `userId`, optional `teamId`, and optional `email`. Identity is the user ID plus team ID when both rows have one. Signing in again follows the same ownership rules as other subscriptions. Tokens last about six hours and refresh about five minutes before expiry or after a 401. A rotated refresh token is saved atomically.
+
+The official Grok CLI uses `/grok/v1/*` on the gateway, forwarded to `https://cli-chat-proxy.grok.com/v1/*`. Responses stream through unchanged; model entries have `base_url` removed so the client keeps using the gateway. Conversations use `x-grok-conv-id` for account affinity. Bare `/v1/responses` remains the OpenAI API route. xAI API keys, cross-client protocol translation, MITM interception and Grok quota bars are outside this provider's scope. Exhaustion messages on 429/402/403 cool down the account and allow failover.
+
+For member login and the exact `~/.grok/config.toml` setup, see [Use the Grok CLI](teams.md#use-the-grok-cli). Before choosing pool, review xAI's terms: making your account available to others can violate them and lead to suspension. Check **Auto Top-up / Additional Usage** too: after the weekly pool runs out, shared traffic may spend the seat owner's prepaid credits. A private account serves only its owner and has lower sharing risk. See [ADR-002](adr/002-grok-accounts.md).
 
 ## Codex accounts (experimental)
 

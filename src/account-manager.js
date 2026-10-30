@@ -1,6 +1,7 @@
 import { refreshAccessToken, isTokenExpiringSoon, isTokenExpired, formatMoney } from './oauth.js';
 import { providerOf, DEFAULT_PROVIDER, isSubscriptionAccount, canServeProvider } from './provider.js';
 import { refreshCodexToken } from './codex-auth.js';
+import { refreshGrokToken } from './grok-auth.js';
 import { parseCodexQuota, parseCodexPlanType, parseCodexActiveLimit } from './codex-quota.js';
 import { sameIdentity } from './identity.js';
 import { weeklyBucketForModel, modelGlobMatches, modelFamily, gatingUtilization, resolveMaxUsage, spendCapReached, resolveSwitchThreshold, sanitizeSwitchThreshold, WEEKLY_BUCKET_KEYS } from './model.js';
@@ -347,6 +348,8 @@ function makeAccount(acct, index, listener = null) {
     // into the request body instead.
     accountId: acct.accountId || null,
     userId: acct.userId || null,
+    teamId: acct.teamId || null,
+    email: acct.email || null,
     accountUuid: acct.accountUuid || null,
     orgUuid: acct.orgUuid || null,
     orgName: acct.orgName || null,
@@ -543,6 +546,7 @@ export class AccountManager {
    * @param {Function} [opts.refreshFn]
    * @param {(account: Record<string, any>, refresh: () => Promise<any>, info: { force: boolean }) => Promise<any>} [opts.refreshCoordinator]  wraps every token refresh (credential-sync.js takes it through a shared lock); the default just refreshes. Resolving null keeps the current token: nothing is written and nothing is announced
    * @param {Function} [opts.codexRefreshFn]
+   * @param {typeof refreshGrokToken} [opts.grokRefreshFn]
    * @param {number} [opts.throttleProbeFloorMs]
    * @param {number} [opts.familyStaleMs]
    * @param {number} [opts.statusStaleMs]
@@ -556,13 +560,14 @@ export class AccountManager {
    * @param {string} [opts.advisorEligibility]  'strict' (default) or 'prefer'
    * @param {{ host: string, port: number }|null} [opts.listener]  this server's own address, so an accounts[].routing that points back at it is refused (see accountRouting)
    */
-  constructor(accounts, switchThreshold = 0.98, { refreshFn = refreshAccessToken, codexRefreshFn = refreshCodexToken, refreshCoordinator = (_account, refresh, _info) => refresh(), throttleProbeFloorMs, familyStaleMs, statusStaleMs, forcedRefreshFloorMs = FORCED_REFRESH_FLOOR_MS, routes, ramp, distributeSessions = false, adaptive, sessionTracker, expiryRouting, advisorEligibility, listener = null } = {}) {
+  constructor(accounts, switchThreshold = 0.98, { refreshFn = refreshAccessToken, codexRefreshFn = refreshCodexToken, grokRefreshFn = refreshGrokToken, refreshCoordinator = (_account, refresh, _info) => refresh(), throttleProbeFloorMs, familyStaleMs, statusStaleMs, forcedRefreshFloorMs = FORCED_REFRESH_FLOOR_MS, routes, ramp, distributeSessions = false, adaptive, sessionTracker, expiryRouting, advisorEligibility, listener = null } = {}) {
     // How long a just-minted token is trusted against a forced refresh.
     this._forcedRefreshFloorMs = forcedRefreshFloorMs;
     // Injectable for tests (mirrors Prober's probeFn); defaults to the real
     // OAuth token refresh.
     this._refreshFn = refreshFn;
     this._codexRefreshFn = codexRefreshFn;
+    this._grokRefreshFn = grokRefreshFn;
     this._refreshCoordinator = refreshCoordinator;
     // Kept for accounts added at runtime, which go through the same guard.
     this.listener = listener;
@@ -1560,6 +1565,13 @@ export class AccountManager {
     // The empty set marks this call as a request's, since a poll hands none.
     // Allocated fresh: a set handed out once is one a later reader could add to.
     this.refreshExpiredQuotas(model, this.expiryRouting.enabled ? (exclude ?? new Set()) : exclude, advisorModel);
+    // Grok's encrypted reasoning is account-bound, even when distribution is off.
+    if (sessionId && this._selectingProvider === 'grok') {
+      for (const index of this.sessionTracker.pinnedAccounts(sessionId)) {
+        const pinned = this.accounts[index];
+        if (pinned && !exclude?.has(index) && this._isAvailable(pinned, model, advisorModel)) return pinned;
+      }
+    }
     // Session-affinity distribution (opt-in): keep a conversation on its pinned
     // account for cache reuse, and route a new one to the least-loaded account.
     // The unit is the conversation rather than the client session because one
@@ -5057,7 +5069,9 @@ export class AccountManager {
         const refresh = async (/** @type {{ budgetMs?: number }} */ opts = {}) => {
           const tokens = await (providerOf(account) === 'codex'
             ? this._codexRefreshFn(sent, undefined, account.routing || null, opts)
-            : this._refreshFn(sent, undefined, account.routing || null, opts));
+            : providerOf(account) === 'grok'
+              ? this._grokRefreshFn(sent, undefined, account.routing || null, opts)
+              : this._refreshFn(sent, undefined, account.routing || null, opts));
           minted = true;
           return tokens;
         };
@@ -5206,7 +5220,7 @@ export class AccountManager {
       code,
       detail,
       since: Date.now(),
-      remedy: providerOf(account) === 'codex' ? 'relaycrew login --codex' : 'relaycrew login',
+      remedy: providerOf(account) === 'grok' ? 'relaycrew login --grok' : providerOf(account) === 'codex' ? 'relaycrew login --codex' : 'relaycrew login',
     };
     return account.errorReason;
   }
@@ -5334,7 +5348,7 @@ export class AccountManager {
       // matching the account it was written for. Rows from an older version
       // therefore stop restoring Codex quota, which is re-learned from traffic.
       const outsideSpend = this.outsideSpend.export(a.index);
-      return { accountUuid: a.accountUuid, accountId: a.accountId, userId: a.userId, provider: providerOf(a), orgUuid: a.orgUuid, orgName: a.orgName, name: a.name, profile, quota, adaptive, outsideSpend };
+      return { accountUuid: a.accountUuid, accountId: a.accountId, userId: a.userId, ...(providerOf(a) === 'grok' ? { teamId: a.teamId } : {}), provider: providerOf(a), orgUuid: a.orgUuid, orgName: a.orgName, name: a.name, profile, quota, adaptive, outsideSpend };
     });
   }
 

@@ -14,7 +14,7 @@ import { teamAccessFor } from './team-access.js';
 import { teamCommand } from './team-command.js';
 import { memberCommand } from './member-command.js';
 import { MemberLogins } from './member-logins.js';
-import { upsertOAuthAccount, upsertCodexAccount } from './account-upsert.js';
+import { upsertOAuthAccount, upsertCodexAccount, upsertGrokAccount } from './account-upsert.js';
 import { importCredentials, loginOAuth, loginOAuthWithPastedCode, startOAuthLogin, fetchProfile, refreshAccessToken, isTokenExpired, isTokenExpiringSoon } from './oauth.js';
 import {
   sameIdentity,
@@ -23,6 +23,7 @@ import {
 } from './identity.js';
 import { resolveAccounts } from './resolve-accounts.js';
 import { loginCodex, startCodexLogin } from './codex-auth.js';
+import { loginGrok, startGrokLogin } from './grok-auth.js';
 import { isRemoteSession, openBrowser, PANEL_LOGIN_TIMEOUT_MS } from './login-flow.js';
 import { providerOf, PROVIDERS } from './provider.js';
 import { syncAccountsFromDisk } from './sync-accounts.js';
@@ -747,7 +748,12 @@ async function serverCommand() {
       loginAccount: async (/** @type {Record<string, any>} */ account, /** @type {{ signal?: AbortSignal, onPrompt?: (prompt: import('./login-flow.js').LoginPrompt) => void }} */ { signal, onPrompt } = {}) => {
         const remote = isRemoteSession();
         let outcome;
-        if (account && providerOf(account) === 'codex') {
+        if (account && providerOf(account) === 'grok') {
+          const flow = await startGrokLogin({ signal, routing: account.routing || null });
+          if (!remote && !signal?.aborted) openBrowser(flow.url);
+          onPrompt?.({ provider: 'grok', url: flow.url, userCode: flow.userCode, remote, listening: false, note: null, submit: () => false });
+          outcome = await upsertGrokAccount(await flow.credentials, { log: console.log });
+        } else if (account && providerOf(account) === 'codex') {
           const flow = await startCodexLogin({ signal, timeoutMs: PANEL_LOGIN_TIMEOUT_MS });
           if (!remote && !signal?.aborted) openBrowser(flow.url);
           onPrompt?.({ provider: 'codex', url: flow.url, remote, listening: flow.listening, note: flow.listenError?.message ?? null, submit: flow.submit });
@@ -1248,22 +1254,33 @@ async function loginCodexCommand() {
   await notifyRunningServer(await loadConfig());
 }
 
+async function loginGrokCommand() {
+  const loaded = await loadOrCreateConfig();
+  const { routing, store } = loginRouting(loaded);
+  await requireWorkingRouting(routing, upstreamFor({ type: 'oauth', provider: 'grok' }, loaded.upstream));
+  const creds = await loginGrok({ noBrowser: args.includes('--no-browser') || isRemoteSession(), routing });
+  await upsertGrokAccount(creds, { name: argValue('--name') ?? undefined, routing, storeRouting: store, log: console.log });
+  await notifyRunningServer(await loadConfig());
+}
+
 async function loginCommand() {
   if (args.includes('--help')) return showHelp();
   const flags = {
     '--claude': 'claude', '--oauth': 'claude', '--token': 'claude',
     '--codex': 'codex',
+    '--grok': 'grok',
     '--claude-api': 'claude-api', '--api': 'claude-api',
     '--openai-api': 'openai-api',
   };
   const methods = [...new Set(Object.entries(flags).filter(([flag]) => args.includes(flag)).map(([, method]) => method))];
   if (methods.length > 1) {
-    console.error('Choose only one login method: --claude, --codex, --claude-api, or --openai-api. --token applies only to Claude.');
+    console.error('Choose only one login method: --claude, --codex, --grok, --claude-api, or --openai-api. --token applies only to Claude.');
     process.exit(1);
   }
   switch (methods[0]) {
     case 'claude': return loginOAuthCommand({ pasteOnly: args.includes('--token') });
     case 'codex': return loginCodexCommand();
+    case 'grok': return loginGrokCommand();
     case 'claude-api': return loginApiCommand();
     case 'openai-api': return loginApiCommand('openai');
   }
@@ -1281,6 +1298,7 @@ async function loginCommand() {
   console.log('  2. Anthropic API key    (Console API billing)');
   console.log('  3. Codex subscription   (ChatGPT Plus, Pro, Team)');
   console.log('  4. OpenAI API key       (API platform billing)');
+  console.log('  5. Grok subscription    (device code, no callback listener)');
   console.log('');
   const choice = await new Promise(resolve => rl.question('Choice [1]: ', resolve));
   rl.close();
@@ -1290,6 +1308,7 @@ async function loginCommand() {
     case '1': await loginOAuthCommand(); break;
     case '2': await loginApiCommand(); break;
     case '4': await loginApiCommand('openai'); break;
+    case '5': await loginGrokCommand(); break;
     default:
       console.error(`Invalid choice: ${choice.trim()}`);
       process.exit(1);
@@ -1883,7 +1902,7 @@ async function accountsCommand() {
 
   if (config.accounts.length === 0) {
     console.log('No accounts configured.');
-    console.log('Add one with: relaycrew import, or relaycrew login --claude, --codex, --claude-api, or --openai-api');
+    console.log('Add one with: relaycrew import, or relaycrew login --claude, --codex, --grok, --claude-api, or --openai-api');
     return;
   }
 
@@ -2777,6 +2796,7 @@ Commands:
   login --claude      Claude subscription login (over SSH: copy/paste)
   login --codex       Codex (ChatGPT) login via browser; on a terminal the address
                       the browser lands on can be pasted instead (--no-browser)
+  login --grok        Grok subscription login via device code (--no-browser)
   login --claude-api  Add an Anthropic API key
   login --openai-api  Add an OpenAI API key for /v1/responses
                       API keys join at priority 100; --priority <n> places them

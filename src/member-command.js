@@ -11,7 +11,7 @@ import { safeLine } from './safe-text.js';
 
 const USAGE = [
   'Usage: relaycrew member accounts',
-  '       relaycrew member login --claude|--codex --private|--pool',
+  '       relaycrew member login --claude|--codex|--grok --private|--pool',
   '       relaycrew member disable|enable|remove <account-id>',
   '       relaycrew member share <account-id> --private|--pool',
   '',
@@ -30,14 +30,14 @@ function parseCommand(args) {
       if (flags.has(arg) || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(USAGE);
       flags.add(arg);
       i++;
-    } else if (['--claude', '--codex', '--private', '--pool'].includes(arg)) {
+    } else if (['--claude', '--codex', '--grok', '--private', '--pool'].includes(arg)) {
       if (flags.has(arg)) throw new Error(USAGE);
       flags.add(arg);
     } else if (arg.startsWith('-')) throw new Error(USAGE);
     else positional.push(arg);
   }
   const [action, id] = positional;
-  const providers = ['--claude', '--codex'].filter(flag => flags.has(flag));
+  const providers = ['--claude', '--codex', '--grok'].filter(flag => flags.has(flag));
   const sharing = ['--private', '--pool'].filter(flag => flags.has(flag));
   if (action === 'login') {
     if (positional.length !== 1 || providers.length !== 1 || sharing.length !== 1) throw new Error(USAGE);
@@ -100,15 +100,17 @@ export async function memberCommand(args, { client = null, input = process.stdin
       const { login } = await client.startLogin(command.provider, command.sharing);
       let completed = false;
       try {
-        print('Open this link, sign in, and paste the result here:');
+        print(login.paste === 'none' ? 'Open this link and confirm the code in your browser:' : 'Open this link, sign in, and paste the result here:');
         print(safeLine(login.url, 8192));
+        if (login.paste === 'none') print(`Code: ${safeLine(login.userCode, 100)}\nWaiting for authorization...`);
         if (login.paste === 'callback-url') print('Copy the full localhost:1455/auth/callback address from the page that does not load.');
         if (!isRemoteSession(env)) open(login.url);
         while (true) {
-          const text = await ask(login.paste === 'callback-url' ? 'Paste the callback address: ' : 'Paste the code: ');
+          const text = login.paste === 'none' ? undefined : await ask(login.paste === 'callback-url' ? 'Paste the callback address: ' : 'Paste the code: ');
           if (text === null) { print('Login cancelled.'); return; }
           try {
             const result = await client.completeLogin(login.id, text);
+            if (result.pending === true) continue;
             completed = true;
             const account = result.account;
             print(`${result.action === 'added' ? 'Added' : 'Updated'} "${safeLine(account.name, 200)}" (${account.provider}, ${account.sharing}) as ${account.id}.`);

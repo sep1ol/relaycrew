@@ -13,7 +13,7 @@ Every idea, by category. State = the folder the file is in (see [README](README.
 
 | Idea | State | Summary | Opinion |
 |---|---|---|---|
-| [Grok accounts](1-inbox/providers/grok-accounts.md) | inbox | Pool xAI/Grok accounts next to Claude and Codex | maybe |
+| [Grok accounts](4-promoted/providers/grok-accounts.md) | promoted → ADR-002 | Pool xAI/Grok subscription accounts with member ownership | accepted |
 
 ## team
 

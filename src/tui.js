@@ -1123,6 +1123,10 @@ export class TUI {
    * @param {string} d
    */
   _loginInput(login, d) {
+    if (login.prompt?.provider === 'grok') {
+      if (d === '\x1b' || d === '\x03' || d === 'c') this._onKeys(d);
+      return;
+    }
     this._loginTimerOff(login);
     let data = d;
     if (login.held) {
@@ -1776,7 +1780,7 @@ export class TUI {
    * @param {LoginPanel} login
    */
   _submitLogin(login) {
-    if (!login.prompt || !login.buf.trim()) return;
+    if (!login.prompt || login.prompt.provider === 'grok' || !login.buf.trim()) return;
     try {
       // false means nothing was left to settle (the browser got there first),
       // so the panel has nothing more to wait for either.
@@ -2684,7 +2688,7 @@ export class TUI {
     const login = this.login;
     if (!login) return { lines, links };
     const prompt = login.prompt;
-    const brand = prompt?.provider === 'codex' ? 'OpenAI' : prompt ? 'Claude' : '';
+    const brand = prompt?.provider === 'grok' ? 'Grok' : prompt?.provider === 'codex' ? 'OpenAI' : prompt ? 'Claude' : '';
     lines.push(` ${bold(`Sign in "${safeLine(login.account, 60)}"`)}${brand ? dim(` · ${brand}`) : ''}`);
     lines.push('');
     if (!prompt) {
@@ -2708,6 +2712,11 @@ export class TUI {
     for (let i = 0; i < prompt.url.length; i += W) linkLine(linkText(prompt.url.slice(i, i + W)));
     prose(`Link sent to your clipboard (if your terminal allows OSC 52).${login.notice ? ` ${login.notice}` : ''}`, dim);
     lines.push('');
+    if (prompt.provider === 'grok') {
+      prose(`Confirm this code in your browser: ${safeLine(prompt.userCode, 100)}`, bold);
+      prose('Waiting for authorization. Browser approval finishes the sign-in; nothing to paste.');
+      return { lines, links };
+    }
 
     // A browser was opened here only when the flow is listening for it on a
     // local terminal; otherwise the link is the whole way in. Said as what
@@ -3212,8 +3221,10 @@ export class TUI {
     // without a config, and it read none before this line existed.
     const pctInBar = this.config?.quotaBarPercent === true;
 
-    let line = ` ${sel}${cur} ${startSlot}${name} ${type}${status} ${l1} ${bar(r1, bw1, t1, w1, th1, pctInBar)}`;
-    if (showBoth) {
+    const hasQuota = providerOf(a) !== 'grok';
+    let line = ` ${sel}${cur} ${startSlot}${name} ${type}${status}`;
+    if (hasQuota) line += ` ${l1} ${bar(r1, bw1, t1, w1, th1, pctInBar)}`;
+    if (showBoth && hasQuota) {
       if (!weeklyFirst && !weeklyOnly && !sessionOnly) line += `  ${l2} ${bar(r2, bw, t2, w2, th2, pctInBar)}`;
       // A backend's monthly window has no unified slot; it draws its own bar
       // and is budgeted as a family column, like S7/F7.
@@ -3750,7 +3761,7 @@ export class TUI {
         // is only offered then.
         const login = this.login;
         const panelKeys = login?.prompt && !login.buf ? `  ${bold('c')} copy link` : '';
-        return ` ${bold('Enter')} submit  ${bold('Esc')} cancel${panelKeys}`;
+        return login?.prompt?.provider === 'grok' ? ` ${bold('Esc')} cancel${panelKeys}` : ` ${bold('Enter')} submit  ${bold('Esc')} cancel${panelKeys}`;
       }
       default:
         return '';

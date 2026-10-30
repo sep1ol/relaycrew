@@ -63,8 +63,8 @@ export class GatewayClient {
   accounts() { return this.call('accounts'); }
   /** @param {import('./member-logins.js').LoginProvider} provider @param {import('./owned-accounts.js').Sharing} sharing */
   startLogin(provider, sharing) { return this.call('accounts/login', { provider, sharing }); }
-  /** @param {string} id @param {string} text */
-  completeLogin(id, text) { return this.call('accounts/login/complete', { id, code: text }, 15 * 60_000); }
+  /** @param {string} id @param {string} [text] */
+  completeLogin(id, text) { return this.call('accounts/login/complete', { id, ...(text === undefined ? {} : { code: text }) }, text === undefined ? 30_000 : 15 * 60_000); }
   /** @param {string} id */
   cancelLogin(id) { return this.call('accounts/login/cancel', { id }); }
   /** @param {string} id @param {{disabled?: boolean, sharing?: import('./owned-accounts.js').Sharing}} patch */

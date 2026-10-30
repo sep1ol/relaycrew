@@ -275,6 +275,21 @@ test('login panel: the hint says what the session can do', () => {
   assert.doesNotMatch(c, /ssh -L/);
 });
 
+test('login panel: Grok shows a device code and waits without a paste field', () => {
+  const flow = fakeFlow({ provider: 'grok', url: 'https://accounts.x.ai/oauth2/device', userCode: 'ABCD-EFGH', listening: false });
+  const tui = makeTUI({ loginAccount: flow.loginAccount });
+  openPanel(tui);
+  const text = stripAnsi(withoutLinks(frame(tui)));
+  assert.match(text, /Grok/);
+  assert.match(text, /ABCD-EFGH/);
+  assert.doesNotMatch(text, /localhost|Paste.*▸/);
+  tui._onData('unneeded-paste');
+  tui._key('enter');
+  assert.equal(tui.mode, 'login');
+  assert.deepEqual(flow.submits, []);
+  tui._key('esc');
+});
+
 test('login panel: quitting cancels a waiting login and turns bracketed paste off', () => {
   const flow = fakeFlow();
   const tui = makeTUI({ loginAccount: flow.loginAccount });

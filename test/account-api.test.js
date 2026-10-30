@@ -115,7 +115,7 @@ test('account HTTP validation, CSRF, pending-login errors and non-team boundarie
     assert.equal(refused.status, 403);
     assert.equal(refused.cache, 'no-store');
   }
-  for (const body of [[], { provider: 'grok', sharing: 'pool' }, { provider: 'claude', sharing: 'public' }, { provider: 'claude', sharing: 'pool', owner: 'bob' }, { provider: 'claude', sharing: 'x'.repeat(65536) }]) {
+  for (const body of [[], { provider: 'xai', sharing: 'pool' }, { provider: 'claude', sharing: 'public' }, { provider: 'claude', sharing: 'pool', owner: 'bob' }, { provider: 'claude', sharing: 'x'.repeat(65536) }]) {
     assert.equal((await f.request('/relaycrew/accounts/login', 'alice-key', body)).status, 400);
   }
   const started = await f.request('/relaycrew/accounts/login', 'alice-key', { provider: 'claude', sharing: 'private' });
