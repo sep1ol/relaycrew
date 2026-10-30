@@ -72,6 +72,7 @@ function boot({ key = 'admin-key', caller = { kind: 'operator', refused: [] }, l
   else window.RelayWorkspace.update(status);
   return { $, document, requests, window, status, store, timers, flush, answer, navigate: async view => { window.location.hash = '#' + view; events.hashchange(); await flush(); }, tick: async () => { const [id, timer] = timers.entries().next().value; timers.delete(id); timer.callback(); await flush(); } };
 }
+const emptyPool = { generatedAt: 0, groups: [] };
 const team = () => ({ ok: true, enabled: true, revision: 'rev-1', accounts: [{ id: 'account-id', name: '<img src=x onerror=alert(1)>', provider: 'anthropic' }], members: [{ name: 'marina', accounts: ['account-id'], maxConcurrent: 4, active: 1, disabled: false, usage: { requests: 5 } }] });
 
 test('browser refuses admin-only APIs for keyless loopback and member/legacy credentials', async () => {
@@ -79,6 +80,7 @@ test('browser refuses admin-only APIs for keyless loopback and member/legacy cre
     const page = boot(options);
     if (options.caller?.kind === 'member') {
       assert.equal(page.requests[0].url, '/relaycrew/accounts'); await page.answer(200, { accounts: [] });
+      assert.equal(page.requests[0].url, '/relaycrew/accounts/pool'); await page.answer(200, emptyPool);
       assert.equal(page.$('viewTitle').textContent, 'Minhas contas');
     } else assert.match(page.$('teamMessage').textContent, /administrador/);
     assert.equal(page.requests.length, 0);
@@ -105,12 +107,37 @@ test('member sign-in falls back from status 403 to me and exposes only My accoun
   assert.equal(page.$('app').style.display, ''); assert.equal(page.$('keybox').style.display, 'none');
   assert.equal(page.requests[0].url, '/relaycrew/accounts');
   await page.answer(200, { accounts: [ownAccount({ disabled: true, disabledBy: 'admin' })] });
+  assert.equal(page.requests[0].url, '/relaycrew/accounts/pool'); await page.answer(200, emptyPool);
   assert.match(page.$('myAccountsContent').textContent, /Personal subscription.*Claude.*Private.*Disabled by an administrator/);
   assert.equal(page.$('myAccountsContent').querySelectorAll('button').find(button => button.textContent === 'Enable').disabled, true);
   await page.navigate('team');
   assert.deepEqual(page.document.querySelectorAll('[data-panel]').filter(panel => !panel.hidden).map(panel => panel.getAttribute('data-panel')), ['my-accounts']);
   assert.deepEqual(page.document.querySelectorAll('[data-view]').filter(link => !link.hidden).map(link => link.getAttribute('data-view')), ['my-accounts']);
   assert.equal(page.$('summary').hidden, true); assert.equal(page.$('teamContent').textContent, ''); assert.equal(page.requests.length, 0);
+});
+
+test('member boot renders the pool below My accounts with owner, plan, sharing and remaining bars', async () => {
+  const page = memberPage(); await page.answer(200, { accounts: [ownAccount()] });
+  assert.equal(page.requests[0].url, '/relaycrew/accounts/pool');
+  assert.equal(page.requests[0].init.headers['x-api-key'], 'member-key');
+  assert.match(page.$('memberPool').textContent, /Loading pool/);
+  const resetAt = Date.now() + 80 * 60000, stale = Date.now() - 2 * 3600_000;
+  await page.answer(200, { generatedAt: Date.now(), groups: [
+    { provider: 'anthropic', label: 'Claude', totals: [{ key: 'fiveHour', label: '5h', remaining: 0.7, accounts: 2, nextResetAt: resetAt }, { key: 'weekly:opus', label: 'Opus', remaining: 0.15, accounts: 1, nextResetAt: null }], accounts: [
+      { key: '0', owner: 'other', ownerIsViewer: false, plan: 'Max 20x', sharing: 'pool', usable: false, state: 'ok', windows: [{ key: 'fiveHour', label: '5h', remaining: 0.9, resetAt, seenAt: stale }, { key: 'weekly:opus', label: 'Opus', remaining: 0.15, resetAt: null, seenAt: null }] },
+      { key: '1', owner: 'marina', ownerIsViewer: true, plan: null, sharing: 'private', usable: true, state: 'limited', windows: [{ key: 'fiveHour', label: '5h', remaining: null, resetAt: null, seenAt: null }] },
+    ] },
+    { provider: 'grok', label: 'Grok', totals: [], accounts: [{ key: '2', owner: 'team', ownerIsViewer: false, plan: null, sharing: 'team', usable: true, state: 'ok', windows: [] }] },
+  ] });
+  assert.equal(page.$('memberPoolSection').hidden, false); assert.equal(page.$('adminPoolSection').hidden, true);
+  const text = page.$('memberPool').textContent;
+  assert.match(text, /Claude5h · 70% left · resets in 1h 20mWeek · Opus · 15% left/);
+  assert.match(text, /other.*not in your access.*Max 20x.*Pool.*90% left.*resets in 1h 20m.*updated 2h ago.*15% left.*Ready/);
+  assert.match(text, /marina.*yours.*—.*Private.*\?.*—.*Limited/);
+  assert.match(text, /GrokNo usage signal from this provider.*team/);
+  assert.deepEqual(page.$('memberPool').querySelectorAll('[role="meter"]').map(meter => meter.getAttribute('aria-valuenow')), ['70', '15', '90', '15', null]);
+  assert.deepEqual(page.$('memberPool').querySelectorAll('i').map(fill => fill.className || ''), ['', 'warn', '', 'warn', '']);
+  assert.equal(page.requests.length, 0);
 });
 
 test('member authentication retains transient failures and discards late me responses after a key change', async () => {
@@ -134,7 +161,7 @@ test('member authentication retains transient failures and discards late me resp
 
 test('add account dialog sends provider/sharing and the correct completion body for all three providers', async () => {
   for (const [provider, paste, sharing, code] of [['claude', 'code', 'private', 'code#state'], ['codex', 'callback-url', 'pool', 'http://localhost:1455/auth/callback?code=auth&state=state'], ['grok', 'none', 'pool', null]]) {
-    const page = memberPage(); await page.answer(200, { accounts: [] });
+    const page = memberPage(); await page.answer(200, { accounts: [] }); await page.answer(200, emptyPool);
     await page.$('accountAdd').fire('click');
     assert.equal(page.$('accountAdd').textContent, 'Add my account');
     assert.equal(page.$('accountLoginTitle').textContent, 'Add my account');
@@ -181,7 +208,7 @@ test('add account dialog sends provider/sharing and the correct completion body 
 test('administrators connect all three providers from Accounts and refresh the fleet', async () => {
   for (const [provider, paste, code] of [['claude', 'code', 'code#state'], ['codex', 'callback-url', 'http://localhost:1455/auth/callback?code=auth&state=state'], ['grok', 'none', '']]) {
     const page = boot({ locale: null, live: true, hash: '#accounts' });
-    await page.answer(200, page.status); await page.answer(200, { accounts: [] });
+    await page.answer(200, page.status); await page.answer(200, { accounts: [] }); await page.answer(200, emptyPool);
     const panel = page.document.querySelectorAll('[data-panel]').find(panel => panel.getAttribute('data-panel') === 'accounts');
     assert.equal(panel.hidden, false);
     assert.equal(page.$('accountsAdd').parentNode, page.$('accountsRefresh').parentNode);
@@ -213,7 +240,7 @@ test('administrators connect all three providers from Accounts and refresh the f
 });
 
 test('administrators can cancel provider sign-in from the shared dialog', async () => {
-  const page = boot({ locale: null, hash: '#accounts' }); await page.answer(200, { accounts: [] });
+  const page = boot({ locale: null, hash: '#accounts' }); await page.answer(200, { accounts: [] }); await page.answer(200, emptyPool);
   await page.$('accountsAdd').fire('click');
   const start = page.$('accountLoginForm').fire('submit'); await page.flush();
   await page.answer(201, { login: { id: 'operator-login', provider: 'claude', paste: 'code', url: 'https://provider.test/authorize' } }); await start;
@@ -226,7 +253,7 @@ test('administrators can cancel provider sign-in from the shared dialog', async 
 });
 
 test('Grok polls complete sequentially on 202, stops on success, and ignores canceled in-flight completion', async () => {
-  const page = memberPage(); await page.answer(200, { accounts: [] });
+  const page = memberPage(); await page.answer(200, { accounts: [] }); await page.answer(200, emptyPool);
   async function startGrok() {
     await page.$('accountAdd').fire('click'); page.$('accountLoginProvider').value = 'grok';
     const start = page.$('accountLoginForm').fire('submit'); await page.flush();
@@ -249,7 +276,7 @@ test('Grok polls complete sequentially on 202, stops on success, and ignores can
 });
 
 test('owned account controls use stable IDs and removal confirmation; Team picker excludes another member’s private accounts', async () => {
-  const page = memberPage(); await page.answer(200, { accounts: [ownAccount()] });
+  const page = memberPage(); await page.answer(200, { accounts: [ownAccount()] }); await page.answer(200, emptyPool);
   const share = page.$('myAccountsContent').querySelectorAll('button').find(button => button.textContent === 'Share with the pool').fire('click'); await page.flush();
   assert.equal(page.requests[0].url, '/relaycrew/accounts/update'); assert.deepEqual(JSON.parse(page.requests[0].init.body), { id: 'own-account', sharing: 'pool' });
   await page.answer(200, { ok: true, applied: true }); await page.answer(200, { accounts: [ownAccount({ sharing: 'pool' })] }); await share;
@@ -265,7 +292,7 @@ test('owned account controls use stable IDs and removal confirmation; Team picke
   assert.match(admin.$('teamContent').textContent, /Owner.*Sharing/);
   await admin.$('teamContent').querySelectorAll('button').find(button => button.textContent === 'Edit').fire('click');
   assert.deepEqual(admin.$('memberAccounts').querySelectorAll('input').map(input => input.value), ['own-account', 'shared', 'account-id']);
-  await admin.navigate('accounts'); await admin.answer(200, { accounts });
+  await admin.navigate('accounts'); await admin.answer(200, { accounts }); await admin.answer(200, emptyPool);
   const card = admin.document.createElement('div');
   assert.equal(admin.window.RelayWorkspace.accountControls({ id: 'own-account', name: 'Personal subscription', provider: 'anthropic' }, card), true);
   assert.match(card.textContent, /Owner: marina.*Sharing: Private/);
@@ -277,7 +304,7 @@ test('owned account controls use stable IDs and removal confirmation; Team picke
   const fleet = boot({ locale: null, live: true, hash: '#accounts' });
   const rows = [ownAccount(), ownAccount({ id: 'same-name', owner: 'other', sharing: 'pool' }), { id: 'operator', name: 'Operator account', provider: 'anthropic' }];
   await fleet.answer(200, { ...fleet.status, accounts: rows.map(({ id, name, provider }) => ({ id, name, provider, type: 'oauth' })) });
-  await fleet.answer(200, { accounts: rows });
+  await fleet.answer(200, { accounts: rows }); await fleet.answer(200, emptyPool);
   const cards = fleet.$('accounts').querySelectorAll('div.card');
   assert.match(cards[0].textContent, /Owner: marina.*Sharing: Private/); assert.match(cards[1].textContent, /Owner: other.*Sharing: Pool/);
   assert.ok(cards[2].querySelectorAll('button').some(button => button.textContent === 'prioritize'), 'operator controls are preserved');

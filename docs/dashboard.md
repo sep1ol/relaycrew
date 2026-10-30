@@ -39,6 +39,14 @@ A successful response distinguishes `saved` from `applied`. If the configuration
 
 Sign in with your member key to open **My accounts**, which lists only accounts you own. Choose **Add my account**, a provider (Claude, ChatGPT/Codex, or Grok), and sharing: **Private** allows only your key; **Pool** follows the team's account grants. For Claude, paste the code shown after sign-in. For ChatGPT/Codex, paste the full address of the final localhost page, even though that page does not load. For Grok, open the link and confirm the displayed code; the dialog waits until confirmation. Cancel stops a pending sign-in. Grok requires a gateway version that supports it.
 
+## Pool
+
+Below **My accounts** (members) and above the fleet cards in **Accounts** (administrators), the Pool shows the remaining quota of the accounts shared with the team: operator accounts and member accounts set to **Pool**, plus your own private accounts marked as yours. Other members' private accounts are not shown or counted.
+
+Accounts are grouped by provider (Claude, ChatGPT/Codex, Grok, API keys, Other). Each group header carries the group totals per window as bars of remaining quota, for example "5h · 62% left · resets in 1h 20m" or "Week · Opus · 15% left"; the table below lists each account by owner (`team` for operator accounts), plan, sharing, one bar per window, and state. A full bar means plenty left; low remaining turns amber, then red; "?" means no reading yet; a reading older than 30 minutes says so. "Not in your access" marks accounts your grant does not include. Grok reports no usage signal. Accounts that are out of quota still count toward totals, so a spent pool reads as spent. Disabled accounts, accounts in error and accounts stopped by an operator cap stay listed but do not count.
+
+The Pool never shows account names, emails, IDs, routing, spend or usage. It refreshes every 15 seconds while its view is open. See [ADR-004](adr/004-pool-view.md).
+
 You can enable, disable, change sharing, or remove your accounts. An account disabled by an administrator can only be re-enabled by an administrator. Administrators see Owner and Sharing in Accounts and Team and can enable, disable, or remove member-owned accounts; only the owner can change sharing. Private accounts owned by other members are excluded from the Team editor's account picker. Removing an account requires confirmation and interrupts its traffic. Before pooling a Grok subscription, check its Auto Top-up setting: shared usage may spend your prepaid credits.
 
 ## Read historical distributions
@@ -61,6 +69,7 @@ All responses below use `Cache-Control: no-store`. Send the administrator key in
 | POST | `/relaycrew/team/rotate` | Replace a member key |
 | POST | `/relaycrew/team/revoke` | Disable a member |
 | GET | `/relaycrew/usage/history` | Bounded historical counters |
+| GET | `/relaycrew/accounts/pool` | Remaining quota of shared accounts for the caller (member or administrator key) |
 
 Every mutation includes `revision` and `name`. Add/update include `accounts` and `maxConcurrent`; update also includes `disabled`. Creation and rotation alone return `issuedKey`. Conflicts return 409 and lock contention returns 503.
 
