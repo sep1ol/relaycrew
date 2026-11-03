@@ -48,6 +48,7 @@ function unavailableText(reason, i18n) {
     'spend-capped': t('extra-usage spend cap reached (maxSpend)'), 'advisor-capped': t("advisor model's usage cap reached (maxUsage)"),
     entitlement: t('upstream refused this account for the organization (cooldown)'), routing: t("the account's routing proxy is unreachable (cooldown)"),
     credential: t('upstream rejected its API key with a 401 (cooldown, then retried)'), route: t('no route allows this account'),
+    billing: t('no paid access (free plan limit or no credits)'),
     'advisor-quota': t("advisor model's weekly bucket spent"), 'advisor-route': t('no route allows the advisor model')
   };
   return Object.hasOwn(labels, reason) ? labels[reason] : reason;
@@ -312,6 +313,17 @@ export function accountBadges(account, current, currentAccounts, now, fleetThres
   ];
   if (isCurrent) badges.push({ cls: 'current', text: t('current') });
   badges.push({ cls: status, text: accountStatusText(status, i18n) });
+  var billing = a.billing;
+  if (billing && billing.kind !== 'unknown') {
+    var billingText = billing.kind === 'paid' ? billing.plan
+      : billing.kind === 'free' ? t('free plan')
+        : billing.kind === 'no-credits' ? t('no credits')
+          : t('{plan} · limit reached · resets {date}', {
+            plan: billing.plan || providerLabel(a.provider, i18n),
+            date: i18n ? i18n.date(billing.until, { month: 'short', day: 'numeric' }) : new Date(billing.until).toLocaleDateString(),
+          });
+    badges.push({ cls: 'billing ' + (billing.kind === 'paid' ? 'meta' : billing.kind), text: billingText });
+  }
   if (recent) badges.push({ cls: 'sessions', text: t('{count} recent', { count: num(recent) }) });
   if (known > recent) badges.push({ cls: 'sessions known', text: t('{count} known', { count: num(known) }) });
   // Free Codex rate-limit reset credits this account holds — what it could
@@ -843,6 +855,8 @@ const PAGE = `<!doctype html>
   .badge.sessions.known { color: var(--dim); }
   .badge.extra-usage { color: var(--warn); border-color: var(--warn); }
   .badge.extra-usage.billing { color: var(--bad); border-color: var(--bad); }
+  .badge.billing.free { color: var(--warn); border-color: var(--warn); }
+  .badge.billing.exhausted, .badge.billing.no-credits { color: var(--bad); border-color: var(--bad); }
   .quota { display: grid; grid-template-columns: 64px 1fr 170px; gap: 8px; align-items: center; margin-top: 6px; }
   .quota .lbl { color: var(--dim); font-size: 12px; }
   .quota .val { color: var(--dim); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }

@@ -2,6 +2,7 @@ import { providerOf, PROVIDERS } from './provider.js';
 import { quotaTier } from './quota-summary.js';
 import { showWeeklyRow } from './status-renderer.js';
 import { teamAllowsAccount } from './team-access.js';
+import { planLabel } from './billing.js';
 
 /**
  * The member-facing projection. None of its keys identify configured accounts.
@@ -30,24 +31,6 @@ function groupProvider(account) {
   const upstream = typeof account.upstream === 'string' ? account.upstream.replace(/\/+$/, '') : null;
   if (account.quota?.backend || (upstream && upstream !== PROVIDERS[provider].upstream)) return 'backend';
   return 'apikey';
-}
-
-/** @param {LiveAccount} account @param {PoolProvider} provider @returns {string|null} */
-function planLabel(account, provider) {
-  if (provider === 'codex') {
-    const plan = account.quota?.planType;
-    return typeof plan === 'string' && plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : null;
-  }
-  if (provider !== 'anthropic') return null;
-  const tier = [account.rateLimitTier, account.seatTier, account.organizationType].join(' ').toLowerCase();
-  if (tier.includes('enterprise')) return 'Enterprise';
-  if (tier.includes('team') || tier.includes('raven')) return 'Team';
-  const weight = quotaTier(account).weight;
-  if (weight === 20) return 'Max 20x';
-  if (weight === 5) return 'Max 5x';
-  if (account.hasClaudeMax === true) return 'Max';
-  if (weight === 1 || account.hasClaudePro === true) return 'Pro';
-  return null;
 }
 
 /** @param {LiveAccount} account @param {number} now @returns {PoolAccount['state']} */
@@ -136,7 +119,7 @@ export function buildPoolView({ accounts, proxy, identity, now }) {
     }
     /** @type {PoolAccount} */
     const row = { key: String(index++), owner: account.owner?.name || 'team', ownerIsViewer,
-      plan: planLabel(account, provider), sharing: account.owner ? account.owner.sharing : 'team',
+      plan: planLabel(account), sharing: account.owner ? account.owner.sharing : 'team',
       usable: teamAllowsAccount(proxy, identity, account), state: accountState(account, now), windows: accountWindows(account, provider, now) };
     group.accounts.push(row);
     weights.set(row, provider === 'anthropic' ? quotaTier(account).weight ?? 1 : 1);

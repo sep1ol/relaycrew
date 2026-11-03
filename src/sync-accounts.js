@@ -233,6 +233,7 @@ export async function syncAccountsFromDisk(diskConfig, memConfig, accountManager
         freshCred.expiresAt < mgr.expiresAt;
       if (changed && !diskIsStaler) {
         accountManager.updateAccountTokens(mgr.index, freshCred);
+        accountManager.clearBillingHold(mgr.index);
         console.log(`[RelayCrew] Refreshed credentials for "${safeLine(mgr.name, 64)}"`);
       }
     } else if (freshCred.apiKey && mgr.credential !== freshCred.apiKey) {
@@ -241,6 +242,7 @@ export async function syncAccountsFromDisk(diskConfig, memConfig, accountManager
       // A different key is a different credential: the 401 hold was about the
       // old one, and the operator who just fixed it should not wait it out.
       accountManager.clearCredentialRejected(mgr.index);
+      accountManager.clearBillingHold(mgr.index);
       console.log(`[RelayCrew] Updated API key for "${safeLine(mgr.name, 64)}"`);
     }
   }

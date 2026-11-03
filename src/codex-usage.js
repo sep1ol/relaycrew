@@ -6,6 +6,7 @@
 
 import { proxyFetch } from './upstream-fetch.js';
 import { windowBucket } from './codex-quota.js';
+import { codexUsageHold, codexPlanType } from './billing.js';
 
 export const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 
@@ -159,7 +160,8 @@ export function normalizeCodexUsagePayload(data) {
     fiveHour: fiveHour && { utilization: fiveHour.utilization, resetAt: fiveHour.resetAt },
     sevenDay: shared.sevenDay && { utilization: shared.sevenDay.utilization, resetAt: shared.sevenDay.resetAt },
     modelBuckets,
-    planType: data?.plan_type || null,
+    planType: codexPlanType(data),
+    limitReached: codexUsageHold(data),
     resetCredits: resetCredits(data?.rate_limit_reset_credits),
   };
 }

@@ -21,6 +21,18 @@ test('normalizes Codex wham usage windows and model buckets', () => {
   assert.equal(usage.planType, 'pro');
 });
 
+test('normalization keeps a monthly billing verdict while dropping the monthly quota window', () => {
+  const resetAt = Math.floor(Date.now() / 1000) + 27 * 86400;
+  const usage = normalizeCodexUsagePayload({ plan_type: 'free', rate_limit: {
+    allowed: false, limit_reached: true,
+    primary_window: { used_percent: 100, limit_window_seconds: 2592000, reset_at: resetAt },
+  } });
+  assert.equal(usage.fiveHour, null);
+  assert.equal(usage.sevenDay, null);
+  assert.deepEqual(usage.limitReached, { resetAt: resetAt * 1000 });
+  assert.equal(normalizeCodexUsagePayload({ plan_type: 'pro', rate_limit: { allowed: false, limit_reached: true } }).limitReached, null);
+});
+
 // Plans differ in which windows they carry, so a window is filed by its own
 // length, with the same tolerance the header path uses — never by "anything
 // long is weekly". A monthly window is not a weekly one, and must not land in
