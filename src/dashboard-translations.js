@@ -2,6 +2,10 @@ import { createDashboardI18n } from './dashboard-i18n.js';
 
 export const DASHBOARD_TRANSLATIONS = {
   "pt-BR": {
+    "free plan": "plano gratuito",
+    "no credits": "sem créditos",
+    "{plan} · limit reached · resets {date}": "{plan} · limite atingido · renova em {date}",
+    "no paid access (free plan limit or no credits)": "sem acesso pago (limite do plano gratuito ou sem créditos)",
     "Remaining quota on the team's shared accounts, plus any private accounts of your own.": "Cota restante nas contas compartilhadas da equipe, mais as suas contas privadas, se houver.",
     "Invalid pool response.": "Resposta do pool inválida.",
     "Could not refresh pool. {error} Retrying automatically.": "Não foi possível atualizar o pool. {error} Tentando novamente automaticamente.",
@@ -466,6 +470,10 @@ export const DASHBOARD_TRANSLATIONS = {
     "{window}: not observed (quota probe off?)": "{window}: sem observação (consulta de cotas desativada?)"
   },
   "es": {
+    "free plan": "plan gratuito",
+    "no credits": "sin créditos",
+    "{plan} · limit reached · resets {date}": "{plan} · límite alcanzado · se restablece el {date}",
+    "no paid access (free plan limit or no credits)": "sin acceso de pago (límite del plan gratuito o sin créditos)",
     "Remaining quota on the team's shared accounts, plus any private accounts of your own.": "Cuota restante en las cuentas compartidas del equipo, más tus cuentas privadas, si las hay.",
     "Invalid pool response.": "Respuesta del pool no válida.",
     "Could not refresh pool. {error} Retrying automatically.": "No se pudo actualizar el pool. {error} Se reintentará automáticamente.",

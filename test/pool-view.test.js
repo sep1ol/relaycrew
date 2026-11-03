@@ -31,6 +31,15 @@ const accounts = () => [
   { id: 'backend-ops', name: 'kimi key', type: 'apikey', upstream: 'https://api.example.test', quota: { backend: { label: 'Plan', text: 'balance $12.30', utilization: 0.25, at: NOW - 3 * HOUR, windows: { weekly: { utilization: 0.25, resetAt: NOW + 24 * HOUR } } } } },
 ];
 
+test('billing-held free account projects Limited and Plan Free', () => {
+  const held = { id: 'free', type: 'oauth', provider: 'codex', unavailable: 'billing', quota: {
+    planType: 'free', billingHold: { reason: 'exhausted', until: NOW + HOUR, seenAt: NOW },
+  } };
+  const row = buildPoolView({ accounts: [held], proxy, identity: alice, now: NOW }).groups[0].accounts[0];
+  assert.equal(row.state, 'limited');
+  assert.equal(row.plan, 'Free');
+});
+
 test('pool view projects shared quota per provider without identifying accounts', () => {
   const view = buildPoolView({ accounts: accounts(), proxy, identity: alice, now: NOW });
   const text = JSON.stringify(view);

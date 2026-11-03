@@ -14,6 +14,7 @@ Every idea, by category. State = the folder the file is in (see [README](README.
 | Idea | State | Summary | Opinion |
 |---|---|---|---|
 | [Grok accounts](4-promoted/providers/grok-accounts.md) | promoted → ADR-002 | Pool xAI/Grok subscription accounts with member ownership | accepted |
+| [Grok billing signal before a request fails](1-inbox/providers/grok-billing-signal.md) | inbox | Research whether xAI exposes a plan or usage endpoint so Grok billing state shows before a request fails | maybe |
 
 ## team
 

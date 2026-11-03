@@ -80,6 +80,20 @@ test('account metadata and session state are separate badges', () => {
   ]);
 });
 
+test('one billing badge per known kind follows the account status', () => {
+  const until = Date.now() + 86400_000;
+  for (const [kind, plan, expected] of [
+    ['paid', 'Pro', 'Pro'], ['free', 'Free', 'free plan'],
+    ['exhausted', 'Free', `Free · limit reached · resets ${new Date(until).toLocaleDateString()}`],
+    ['no-credits', null, 'no credits'], ['unknown', null, null],
+  ]) {
+    const badges = accountBadges({ name: 'account', provider: 'codex', status: 'active', billing: { kind, plan, until } });
+    const billing = badges.filter(b => b.cls.startsWith('billing '));
+    assert.deepEqual(billing.map(b => b.text), expected ? [expected] : []);
+    if (expected) assert.equal(badges[badges.findIndex(b => b.cls === 'active') + 1], billing[0]);
+  }
+});
+
 // ── per-account switch threshold (#409) ───────────────────────
 
 test('thresholdBadgeText is silent with no override, or one that matches the fleet', () => {

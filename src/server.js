@@ -15,7 +15,7 @@ import { TopLevelFieldFinder, modelGlobMatches, parseRequestEffort, parseRequest
 import { conversationDigest, pinKeyFor } from './conversation.js';
 import { BodyWriter, truncationNote } from './request-log.js';
 import { upstreamFetch, upstreamPoolStatus } from './upstream-fetch.js';
-import { applyAuthHeaders, upstreamFor, upstreamPathFor, stripGrokModelBaseUrls, isGrokExhaustion, rewritesBody, defaultHeadersTimeoutFor, providerForPath, providerForHost, interceptHostsFor, providerOf, canServeProvider, DEFAULT_PROVIDER, PROVIDERS } from './provider.js';
+import { applyAuthHeaders, upstreamFor, upstreamPathFor, stripGrokModelBaseUrls, rewritesBody, defaultHeadersTimeoutFor, providerForPath, providerForHost, interceptHostsFor, providerOf, canServeProvider, DEFAULT_PROVIDER, PROVIDERS } from './provider.js';
 import { tunnelTls } from './sx.js';
 import { createEgressGuard } from './egress-guard.js';
 import { isRoutingFailure, describeRouting } from './account-routing.js';
@@ -34,6 +34,7 @@ import { responsesEventUsage, isResponsesBody, normalizeResponsesUsage } from '.
 import { classificationPath } from './classification-path.js';
 import { serveManagementMcp } from './mcp-tools.js';
 import { codexSpentWindows, isAccountWideCodexWindow } from './codex-quota.js';
+import { billingBlockers, noPaidAccountMessage, providerErrorBody, codexLimitReached, isCreditBalanceRefusal, grokBillingHold, parseJsonOrNull, BILLING_RECHECK_SECONDS } from './billing.js';
 import { atomicConfigUpdate } from './config.js';
 import { ConfigOpError, setThreshold, thresholdRatio } from './config-ops.js';
 import { envVar, canonicalControlUrl, isControlPath } from './brand.js';
@@ -178,6 +179,43 @@ async function readErrorBody(body, limit = ERROR_BODY_INSPECTION_LIMIT) {
   } finally {
     reader.releaseLock();
   }
+}
+
+/** @param {{status: number, headers: any, body: ReadableStream|null}} response
+ * @returns {Promise<{raw: Buffer|null, response: {status: number, headers: any, body: ReadableStream, arrayBuffer: () => Promise<Buffer|null>}}>}
+ *   `raw` is the body when it fit the inspection limit; `response.body` replays the read prefix and the unread tail. */
+async function peekErrorBody(response) {
+  const reader = response.body?.getReader();
+  const chunks = [];
+  let length = 0, ended = !reader, failure = null;
+  try {
+    while (!ended && length <= ERROR_BODY_INSPECTION_LIMIT) {
+      const { done, value } = await reader.read();
+      ended = done;
+      if (!done) { chunks.push(Buffer.from(value)); length += value.byteLength; }
+    }
+  } catch (err) {
+    failure = err;
+    ended = true;
+  }
+  const replay = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      if (failure) { reader.releaseLock(); controller.error(failure); }
+      else if (ended) { reader?.releaseLock(); controller.close(); }
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) { reader.releaseLock(); controller.close(); }
+      else controller.enqueue(value);
+    },
+    cancel(reason) { return ended ? undefined : reader.cancel(reason); },
+  });
+  return {
+    raw: !failure && length <= ERROR_BODY_INSPECTION_LIMIT ? Buffer.concat(chunks, length) : null,
+    response: { status: response.status, headers: response.headers, body: replay,
+      arrayBuffer: () => readErrorBody(replay, Infinity) },
+  };
 }
 
 // Response header names that are connection-specific and thus illegal on an
@@ -2869,7 +2907,8 @@ export function exhaustedMessage(candidates, model, retryAfter) {
   const dead = eligible.filter(a => a.status === 'error');
   const now = Date.now();
   const unreachable = eligible.filter(a => a.status !== 'error' && a.routingFailedUntil > now);
-  if (!dead.length && !unreachable.length) {
+  const billing = billingBlockers(eligible.filter(a => !dead.includes(a) && !unreachable.includes(a)), now);
+  if (!dead.length && !unreachable.length && !billing.held.length) {
     const pool = eligible.length === 1 ? '1 account' : `${eligible.length} accounts`;
     return `No account can serve this request${scope}: all ${pool}${aside} are at their quota or rate limit.${when}`;
   }
@@ -2888,11 +2927,12 @@ export function exhaustedMessage(candidates, model, retryAfter) {
   if (unreachable.length) {
     blockers.push(`${named(unreachable)} cannot reach ${unreachable.length === 1 ? 'its' : 'their'} routing proxy (see: relaycrew routing <name>)`);
   }
+  if (billing.held.length) blockers.push(noPaidAccountMessage(providerOf(billing.held[0].account), billing, { names: true }));
 
   // Every account that could take this request is blocked by something a wait
   // does not fix. No reset clause: no window is being waited on, and the
   // retry-after the caller worked out is only the interval it falls back to.
-  const waiting = eligible.length - dead.length - unreachable.length;
+  const waiting = eligible.length - dead.length - unreachable.length - billing.held.length;
   if (!waiting) {
     return `No account can serve this request${scope}: ${blockers.join('; ')}, and no other account is eligible for it.${aside}`;
   }
@@ -3243,6 +3283,26 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
       },
     }));
     return;
+  }
+  if (!account) {
+    const candidates = candidateAccounts(accountManager, ctx.model, ctx.provider)
+      .filter(a => (ctx.pinnedIndex == null || a.index === ctx.pinnedIndex) && (!ctx.access || ctx.access.allows(a)));
+    const billing = billingBlockers(candidates, Date.now());
+    // A hold that outlasts every wait this request could take is answered now;
+    // a shorter one falls through to the hold and inline-wait path below.
+    const waitable = Math.max(ctx.holdBudgetMs || 0, INLINE_RETRY_AFTER_MAX_SECONDS * 1000);
+    if (billing.all && billing.soonestUntil - Date.now() > waitable) {
+      ctx.status = 429;
+      ctx.account = '(billing unavailable)';
+      if (!res.headersSent && !clientGone(res)) {
+        const provider = ctx.provider || DEFAULT_PROVIDER;
+        const retryAfter = Math.min(BILLING_RECHECK_SECONDS, Math.max(1, Math.ceil((billing.soonestUntil - Date.now()) / 1000)));
+        const message = `${noPaidAccountMessage(provider, billing, { names: ctx.access?.identity.kind !== 'member' })}.`;
+        res.writeHead(429, { 'Content-Type': 'application/json', 'retry-after': String(retryAfter) });
+        res.end(JSON.stringify(providerErrorBody(provider, message, billing)));
+      }
+      return;
+    }
   }
   if (!account && ctx.access?.identity.kind === 'member') {
     ctx.status = 429;
@@ -3624,7 +3684,18 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     // without extra usage and says nothing about this request.
     const quotaWindowRejected = ['5h', '7d', '7d_oi'].some(w => rateLimitHeaders[`anthropic-ratelimit-unified-${w}-status`] === 'rejected')
       || codexSpentWindows(rateLimitHeaders).length > 0;
-    const nonRetryable429 = upstreamRes.status === 429 && !quotaWindowRejected
+    const inspect = upstreamRes.status === 429
+      || (ctx.provider === 'grok' && [402, 403].includes(upstreamRes.status))
+      || (ctx.provider === DEFAULT_PROVIDER && upstreamRes.status === 400);
+    let errorRaw = null;
+    if (inspect) {
+      const peeked = await peekErrorBody(upstreamRes);
+      errorRaw = peeked.raw;
+      upstreamRes = peeked.response;
+    }
+    const errorBody = parseJsonOrNull(errorRaw);
+    const codexLimit = ctx.provider === 'codex' ? codexLimitReached(errorBody) : null;
+    const nonRetryable429 = upstreamRes.status === 429 && !quotaWindowRejected && !codexLimit
       && upstreamRes.headers.get('x-should-retry')?.trim().toLowerCase() === 'false';
     // This refusal is about the request, even if it carries incidental quota
     // headers. Do not store those headers as an account-wide quota verdict.
@@ -3636,31 +3707,33 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     // And a response that is not an error is proof its API key works: the 401
     // cooldown and the count behind its length start over (#473). Only that —
     // a 429 or a 5xx says nothing about the key either way.
-    if (upstreamRes.status < 400) accountManager.clearCredentialRejected(account.index);
+    if (upstreamRes.status < 400) {
+      accountManager.clearCredentialRejected(account.index);
+      accountManager.clearBillingHold(account.index);
+    }
 
     // Any non-429 response is live proof a rate-limit hold no longer binds —
     // this is what lets a revalidation probe (a throttled account selected by
     // _selectProbe) clear its own hold and return the fleet to service.
     if (upstreamRes.status !== 429) accountManager.clearRateLimited(account.index);
 
-    if (ctx.provider === 'grok' && [429, 402, 403].includes(upstreamRes.status)) {
-      const raw = await readErrorBody(upstreamRes.body);
-      if (isGrokExhaustion(upstreamRes.status, raw)) {
-        const seconds = Number(upstreamRes.headers.get('retry-after')) || 60;
-        const hold = Math.min(Math.max(seconds, 1), 3600);
-        accountManager.markRateLimited(account.index, hold);
+    if (ctx.provider === 'grok') {
+      const hold = grokBillingHold(upstreamRes.status, errorRaw, upstreamRes.headers.get('retry-after'), Date.now());
+      if (hold) {
+        await upstreamRes.body?.cancel();
+        accountManager.holdBilling(account.index, hold);
         ctx.tried.add(account.index);
-        console.log(`[RelayCrew] Grok usage exhausted on "${safeLine(account.name, 64)}" — throttling ${hold}s and switching account`);
         if (clientGone(res)) { ctx.abandoned = true; return; }
         return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
       }
-      // Inspection consumed the stream; replay other refusals through the normal handling.
-      const buffered = raw ?? Buffer.alloc(0);
-      upstreamRes = {
-        status: upstreamRes.status, headers: upstreamRes.headers,
-        body: new ReadableStream({ start(controller) { controller.enqueue(buffered); controller.close(); } }),
-        arrayBuffer: async () => buffered,
-      };
+    }
+
+    if (upstreamRes.status === 400 && isCreditBalanceRefusal(errorBody)) {
+      await upstreamRes.body?.cancel();
+      accountManager.holdBilling(account.index, { reason: 'no-credits' });
+      ctx.tried.add(account.index);
+      if (clientGone(res)) { ctx.abandoned = true; return; }
+      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
     }
 
     // Other 429s retain their established classification: quota rejection
@@ -3683,15 +3756,8 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
       // together they turned one request's problem into a fleet-wide stall
       // (#288). A throttle, by contrast, always carries the headers.
       const requestScoped = retryAfterHeader == null && Object.keys(rateLimitHeaders).length === 0;
-      // The body is diagnostic for a request-scoped refusal (it names the
-      // reason) and noise otherwise.
-      let refusal = '';
-      if (requestScoped) {
-        const raw = await readErrorBody(upstreamRes.body).catch(() => null);
-        try { refusal = raw ? String(JSON.parse(raw.toString('utf8'))?.error?.message || '') : ''; } catch { refusal = ''; }
-      } else {
-        await upstreamRes.body?.cancel();
-      }
+      const refusal = requestScoped ? String(errorBody?.error?.message || '') : '';
+      await upstreamRes.body?.cancel();
 
       // Durable quota exhaustion vs. a transient rate limit. A "rejected" unified
       // status means a quota bucket is spent, so waiting and retrying the SAME
@@ -3742,6 +3808,21 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
             ? ` (${safeLine(spentCodexWindows.join(', '), 80)} spent)` : '';
           console.log(`[RelayCrew] Quota rejection (429) on "${account.name}"${spent} — throttling ${hold}s and switching account`);
           accountManager.markRateLimited(account.index, hold);
+        }
+        ctx.tried.add(account.index);
+        if (clientGone(res)) { ctx.abandoned = true; return; }
+        return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
+      }
+
+      // A free plan has one window and nothing to wait for: hold it until its
+      // reset. A paid plan's limit is a spent window the headers did not state,
+      // so it gets the quota path's hold and rotates like one.
+      if (codexLimit && !codexFamilyRejected) {
+        if (codexLimit.plan === 'free') {
+          accountManager.holdBilling(account.index, { reason: 'exhausted', until: codexLimit.resetAt, plan: codexLimit.plan });
+        } else {
+          const seconds = codexLimit.resetAt ? Math.ceil((codexLimit.resetAt - Date.now()) / 1000) : retryAfter;
+          accountManager.markRateLimited(account.index, Math.min(Math.max(seconds, 1), 3600));
         }
         ctx.tried.add(account.index);
         if (clientGone(res)) { ctx.abandoned = true; return; }
@@ -4853,6 +4934,7 @@ function blockingResets(accountManager, account, model) {
   /** @type {any[]} */
   const resets = [account.rateLimitedUntil, account.entitlementDeniedUntil, account.routingFailedUntil,
     account.credentialRejectedUntil];
+  if (q.billingHold) resets.push(Math.min(q.billingHold.until, Date.now() + BILLING_RECHECK_SECONDS * 1000));
 
   if (q.unified5h != null && q.unified5h >= accountManager.thresholdFor('unified5h')) {
     resets.push(q.unified5hReset);

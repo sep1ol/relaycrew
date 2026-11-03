@@ -17,6 +17,7 @@ import { safeLine } from './safe-text.js';
 import { parseRoutingUrl, describeRouting, routingToUrl, isRoutingFailure } from './account-routing.js';
 import { isSelfProxy } from './upstream-proxy.js';
 import { envVar } from './brand.js';
+import { billingStatus, BILLING_RECHECK_SECONDS } from './billing.js';
 /** @typedef {import('./session-tracker.js').Observation} Observation */
 
 // Re-exported for callers that import these model helpers from here.
@@ -129,6 +130,7 @@ export const DEFAULT_SWITCH_THRESHOLD = 0.98;
 // windows, learned passively from upstream responses. Transient/derived state
 // (probing, requalify, rateLimitedUntil) is intentionally excluded.
 const PERSISTED_QUOTA_FIELDS = [
+  'billingHold', 'planType',
   'unified5h', 'unified7d', 'unified7dSonnet', 'unified7dFable',
   'unified5hReset', 'unified7dReset', 'unified7dSonnetReset', 'unified7dFableReset',
   'unified5hSeenAt', 'unified7dSeenAt',
@@ -192,6 +194,7 @@ const CAPPED_FAMILY_HOLD_MS = 7 * 24 * 3600_000;
 
 function emptyQuota() {
   return {
+    billingHold: /** @type {import('./billing.js').BillingHold|null} */ (null),
     // Standard API rate limits (API key accounts)
     tokensLimit: null,
     tokensRemaining: null,
@@ -1109,6 +1112,31 @@ export class AccountManager {
     if (!account) return;
     account.credentialRejectedUntil = null;
     account.credentialRejections = 0;
+  }
+
+  /** @param {number} index @param {{reason: import('./billing.js').BillingHold['reason'], until?: number|null, plan?: string|null}} hold */
+  holdBilling(index, { reason, until, plan }) {
+    const account = this.accounts[index];
+    if (!account) return;
+    const now = Date.now();
+    if (plan) account.quota.planType = safeLine(plan, 64);
+    const previous = account.quota.billingHold;
+    const hold = { reason, until: Number.isFinite(until) && until > 0 ? until : now + BILLING_RECHECK_SECONDS * 1000, seenAt: now };
+    account.quota.billingHold = hold;
+    if (previous?.reason !== hold.reason || previous?.until !== hold.until) {
+      console.log(`[RelayCrew] Billing ${reason} on "${safeLine(account.name, 64)}" until ${new Date(hold.until).toISOString()}`);
+    }
+  }
+
+  /** @param {number} index */
+  clearBillingHold(index) {
+    const account = this.accounts[index];
+    if (account) account.quota.billingHold = null;
+  }
+
+  _billingHeld(account, now = Date.now()) {
+    const hold = account.quota?.billingHold;
+    return !!hold && hold.until > now;
   }
 
   /** True while an account is in its routing-failure cooldown; expiry is
@@ -2342,6 +2370,9 @@ export class AccountManager {
     // unavailable, which is exactly when a held API key would otherwise be
     // asked again on every request — the loop the hold exists to prevent.
     if (this._credentialHeld(account)) return false;
+    if (this._billingHeld(account)) {
+      return Date.now() >= account.quota.billingHold.seenAt + BILLING_RECHECK_SECONDS * 1000;
+    }
     // A 429 hold is respected verbatim at first, but a hold is a snapshot: the
     // 429 that armed it may itself have been transient (e.g. the retry burst
     // after a network flap), and while it lasts NOTHING revalidates it — so a
@@ -2509,6 +2540,7 @@ export class AccountManager {
     }
     if (!best) return null;
 
+    if (this._billingHeld(best)) best.quota.billingHold.seenAt = now;
     this._nextProbeAt = now + this.probeIntervalMs;
     this._setCurrent(best);
     this._beginRamp(best);
@@ -2645,7 +2677,7 @@ export class AccountManager {
    *
    * Returns one of: 'disabled', 'spend-capped', 'capped', 'throttled', 'error',
    * 'entitlement', 'exhausted', 'upstream-rejected', 'quota', 'route', 'routing',
-   * 'credential', 'advisor-capped', 'advisor-quota', 'advisor-route'.
+   * 'credential', 'billing', 'advisor-capped', 'advisor-quota', 'advisor-route'.
    */
   unavailableReason(account, model = null, advisorModel = null) {
     if (!account) return 'error';
@@ -2676,6 +2708,7 @@ export class AccountManager {
 
     // Upstream answered 401 to this account's API key a moment ago.
     if (this._credentialHeld(account)) return 'credential';
+    if (this._billingHeld(account)) return 'billing';
 
     // Check rate limit expiry
     if (account.status === 'throttled' && account.rateLimitedUntil) {
@@ -4889,6 +4922,10 @@ export class AccountManager {
       q.unified5hSeenAt = null;
     }
     if (usage.planType) q.planType = safeLine(usage.planType, 64);
+    if (usage.limitReached?.clear) this.clearBillingHold(accountIndex);
+    else if (usage.limitReached) {
+      this.holdBilling(accountIndex, { reason: 'exhausted', until: usage.limitReached.resetAt });
+    }
     // Stamped, because nothing else refreshes it: a payload that mentions no
     // credits leaves the last reading alone rather than blanking it, so the
     // age is the only thing that says how much the number is worth.
@@ -5479,6 +5516,7 @@ export class AccountManager {
         // Distinguishes a local threshold decision from an upstream rejection —
         // without it the two are indistinguishable in status output (#166).
         unavailable: this.unavailableReason(a),
+        billing: billingStatus(a, Date.now()),
         sessions: sessions.perAccount[a.index] || 0,
         knownSessions: sessions.knownPerAccount[a.index] || 0,
         // Shared-weekly pressure (model-agnostic), so the ordering the router

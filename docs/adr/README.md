@@ -56,3 +56,4 @@ Each with the reason it was rejected.
 | [002](002-grok-accounts.md) | Providers / Team | Grok subscription accounts | accepted |
 | [003](003-health-and-version-routes.md) | Gateway / Operations | Public health and version routes | accepted |
 | [004](004-pool-view.md) | Team / Dashboard | Members see the pool's remaining quota | accepted |
+| [005](005-billing-state.md) | Gateway / Dashboard | Billing state per account | accepted |
