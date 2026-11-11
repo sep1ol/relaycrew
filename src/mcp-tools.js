@@ -1,6 +1,6 @@
 import { distributionMode } from './account-manager.js';
 import { configIndexFor, markAccountRemoved } from './account-pairing.js';
-import { atomicConfigUpdate } from './config.js';
+import { atomicConfigUpdate, resolveQuotaProbeSeconds } from './config.js';
 import {
   ConfigOpError,
   DISTRIBUTE_MODES,
@@ -143,7 +143,7 @@ function tunableSettings({ config }) {
   return {
     switchThreshold: config.switchThreshold ?? null,
     distribution: distributionMode(config.distributeSessions),
-    quotaProbeSeconds: config.quotaProbeSeconds || 0,
+    quotaProbeSeconds: resolveQuotaProbeSeconds(config),
     warmupSeconds: config.warmupSeconds || 0,
     warmupSchedule: config.warmupSchedule || null,
     routes: config.routes || [],

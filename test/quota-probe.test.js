@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeUsageBucket, findScopedWeeklyLimit, normalizeUsagePayload } from '../src/oauth.js';
+import { normalizeUsageBucket, findScopedWeeklyLimit, normalizeUsagePayload, fetchUsage } from '../src/oauth.js';
 import { AccountManager, isFableModel, parseRequestModel } from '../src/account-manager.js';
 import { Prober, MAX_PROBE_INTERVAL_MS, probeApplicable } from '../src/prober.js';
 
@@ -101,6 +101,65 @@ const USAGE_PAYLOAD = {
       scope: { model: { id: null, display_name: 'Fable' } } },
   ],
 };
+
+test('shared usage falls back to unscoped limits when legacy readings are unusable', () => {
+  const u = normalizeUsagePayload({
+    five_hour: null,
+    seven_day: { utilization: 'unknown' },
+    limits: [
+      { kind: 'session', group: 'session', percent: 12, scope: null, resets_at: '2026-12-01T13:00:00Z' },
+      { kind: 'weekly_all', group: 'weekly', percent: 0, scope: null, resets_at: '2026-12-05T13:00:00Z' },
+    ],
+  });
+  assert.deepEqual(u.fiveHour, { utilization: 0.12, resetAt: Date.parse('2026-12-01T13:00:00Z') });
+  assert.deepEqual(u.sevenDay, { utilization: 0, resetAt: Date.parse('2026-12-05T13:00:00Z') });
+});
+
+test('usable legacy shared readings win over limits, including explicit zero', () => {
+  for (const percent of [35, 0]) {
+    const bucket = { utilization: percent, resets_at: '2026-12-01T13:00:00Z' };
+    const u = normalizeUsagePayload({
+      five_hour: bucket,
+      seven_day: bucket,
+      limits: [
+        { kind: 'session', group: 'session', percent: 90, scope: null },
+        { kind: 'weekly_all', group: 'weekly', percent: 90, scope: null },
+      ],
+    });
+    const expected = { utilization: percent / 100, resetAt: Date.parse(bucket.resets_at) };
+    assert.deepEqual(u.fiveHour, expected);
+    assert.deepEqual(u.sevenDay, expected);
+  }
+});
+
+test('missing or malformed shared limits preserve unknown readings and stored usage', () => {
+  const limitsCases = [undefined, [], 'invalid', [
+    null,
+    { kind: 'session', group: 'session', percent: 'unknown', scope: null },
+    { kind: 'weekly_all', group: 'weekly', percent: null, scope: null },
+    { kind: 'session', group: 'session', percent: 0, scope: { model: { display_name: 'Sonnet' } } },
+    { kind: 'weekly_all', group: 'weekly', percent: 0, scope: { model: { display_name: 'Sonnet' } } },
+    { kind: 'weekly_scoped', group: 'weekly', percent: 0, scope: null },
+    { kind: 'session', group: 'weekly', percent: 0, scope: null },
+    { kind: 'weekly_all', group: 'session', percent: 0, scope: null },
+  ]];
+  const am = new AccountManager([oauth('a')], 0.98);
+  const resetAt = Date.now() + 3600_000;
+  am.applyUsageData(0, {
+    fiveHour: { utilization: 0.98, resetAt },
+    sevenDay: { utilization: 0.99, resetAt },
+  });
+  const before = { ...am.accounts[0].quota };
+  for (const limits of limitsCases) {
+    const u = normalizeUsagePayload({ limits });
+    assert.equal(u.fiveHour, null);
+    assert.equal(u.sevenDay, null);
+    am.applyUsageData(0, u);
+    for (const key of ['unified5h', 'unified7d', 'unified5hReset', 'unified7dReset', 'unified5hSeenAt', 'unified7dSeenAt']) {
+      assert.equal(am.accounts[0].quota[key], before[key], key);
+    }
+  }
+});
 
 test('a listed-but-unused family reads as zero with no window', () => {
   const u = normalizeUsagePayload(USAGE_PAYLOAD);
@@ -277,6 +336,49 @@ test('prober probes oauth accounts and applies the usage data', async () => {
   assert.equal(calls, 1);
   assert.equal(am.accounts[0].quota.unified5h, 0.1);
   assert.equal(am.accounts[0].quota.unified7d, 0.2);
+});
+
+test('a successful limits-only probe replaces stale shared usage and makes the account available', async () => {
+  const am = new AccountManager([oauth('a')], 0.98);
+  const account = am.accounts[0];
+  const q = account.quota;
+  const now = Date.now();
+  Object.assign(q, {
+    unified5h: 0.98, unified5hReset: now + 3600_000, unified5hSeenAt: now - 60_000,
+    unified7d: 0.99, unified7dReset: now + 24 * 3600_000, unified7dSeenAt: now - 60_000,
+  });
+  assert.equal(am._isAvailable(account), false);
+  const sessionReset = now + 2 * 3600_000;
+  const weeklyReset = now + 2 * 24 * 3600_000;
+  const prober = new Prober(am, {
+    intervalMs: 0,
+    probeFn: (token, routing) => fetchUsage(token, routing, {
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({
+          five_hour: null,
+          seven_day: null,
+          limits: [
+            { kind: 'session', group: 'session', percent: 12, scope: null, resets_at: new Date(sessionReset).toISOString() },
+            { kind: 'weekly_all', group: 'weekly', percent: 0, scope: null, resets_at: new Date(weeklyReset).toISOString() },
+          ],
+        }),
+      }),
+    }),
+    log: () => {},
+  });
+
+  await prober.probeAll();
+
+  assert.equal(prober.getStatus().accounts[0].status, 'ok');
+  assert.equal(q.unified5h, 0.12);
+  assert.equal(q.unified7d, 0);
+  assert.equal(q.unified5hReset, sessionReset);
+  assert.equal(q.unified7dReset, weeklyReset);
+  assert.ok(q.unified5hSeenAt >= now);
+  assert.ok(q.unified7dSeenAt >= now);
+  assert.equal(am._isAvailable(account), true);
+  assert.equal(account.usage.totalRequests, 0);
 });
 
 test('prober learns missing quota tier metadata with the first quota refresh', async () => {
@@ -484,4 +586,69 @@ test('prober clamps its interval so the timer cannot overflow', () => {
   const huge = new Prober(am, { intervalMs: Number.MAX_SAFE_INTEGER, probeFn: async () => ({}), log: () => {} });
   assert.equal(huge.intervalMs, MAX_PROBE_INTERVAL_MS, 'the constructor clamps too');
   assert.equal(new Prober(am, { intervalMs: NaN, log: () => {} }).intervalMs, 0, 'a non-number is off');
+});
+
+test('concurrent manual and timer probes await the same active upstream cycle', async () => {
+  const am = new AccountManager([oauth('a'), oauth('b')], 0.98);
+  const pending = [];
+  const prober = new Prober(am, { probeFn: () => new Promise(resolve => pending.push(resolve)), log: () => {} });
+  const first = prober.probeAll();
+  await new Promise(resolve => setImmediate(resolve));
+  let completed = false;
+  const second = prober.probeAll().then(() => { completed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false, 'overlapping callers must wait for the actual quota readings');
+  assert.equal(pending.length, 2, 'one upstream reading per account');
+  assert.equal(prober.getStatus().running, true);
+  for (const resolve of pending) resolve({ fiveHour: { utilization: 0.25 }, sevenDay: { utilization: 0.5 } });
+  await Promise.all([first, second]);
+  assert.equal(prober.getStatus().running, false);
+  assert.deepEqual(am.accounts.map(account => account.quota.unified5h), [0.25, 0.25]);
+});
+
+test('background minute cycles read every eligible account without a dashboard', async t => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+  const am = new AccountManager([oauth('a'), oauth('b')], 0.98);
+  const readings = [];
+  const prober = new Prober(am, { intervalMs: 60_000, probeFn: async token => {
+    readings.push(token); return { fiveHour: { utilization: 0.2 }, sevenDay: { utilization: 0.4 } };
+  }, log: () => {} });
+  t.after(() => prober.stop());
+  prober.start();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(readings, ['t-a', 't-b']);
+  for (let cycle = 2; cycle <= 3; cycle++) {
+    t.mock.timers.tick(60_000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(readings.length, cycle * 2);
+    assert.deepEqual(readings.slice(-2), ['t-a', 't-b']);
+  }
+});
+
+test('probe results remain separate for accounts with the same name', async () => {
+  const am = new AccountManager([
+    oauth('shared', { id: 'claude-shared' }),
+    oauth('shared', { id: 'codex-shared', provider: 'codex', accountId: 'acct-shared' }),
+  ], 0.98);
+  const prober = new Prober(am, {
+    probeFn: async () => ({ error: 'Claude refused', status: 429 }),
+    codexProbeFn: async () => ({ sevenDay: { utilization: 0.07 } }),
+    log: () => {},
+  });
+  await prober.probeAll();
+  const rows = prober.getStatus().accounts;
+  assert.deepEqual(rows.map(row => row.status), ['error', 'ok']);
+  assert.deepEqual(rows.map(row => row.id), ['claude-shared', 'codex-shared']);
+  assert.deepEqual(rows.map(row => row.provider), ['anthropic', 'codex']);
+});
+
+test('a rejected probe cycle clears the shared operation and permits retry', async () => {
+  const am = new AccountManager([oauth('a')], 0.98);
+  const prober = new Prober(am, { log: () => {} });
+  prober.probeAccount = async () => { throw new Error('unexpected cycle failure'); };
+  await assert.rejects(prober.probeAll(), /unexpected cycle failure/);
+  assert.equal(prober.getStatus().running, false);
+  prober.probeAccount = async () => {};
+  await prober.probeAll();
+  assert.equal(prober.getStatus().running, false);
 });

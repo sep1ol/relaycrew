@@ -947,6 +947,8 @@ ${WORKSPACE_HTML}
   var POLL_MS = 5000;
   var timer = null;
   var authEpoch = 0;
+  var pollSequence = 0;
+  var renderedPollSequence = 0;
   var memberKey = null;
   var lastStatus = null;
   var lastStatusAt = 0;
@@ -1594,36 +1596,39 @@ ${SHARED_HELPERS}
 
   function poll() {
     var requestKey = localStorage.getItem(KEY) || '';
-    var requestEpoch = authEpoch, member = false;
+    var requestEpoch = authEpoch, sequence = ++pollSequence, member = false;
     function currentAuth() { return requestEpoch === authEpoch && (localStorage.getItem(KEY) || '') === requestKey; }
     function rejected() { showKeybox(); localStorage.removeItem(KEY); return null; }
     function asMember() {
       return fetch('/relaycrew/me', { headers: { 'x-api-key': requestKey }, cache: 'no-store' }).then(function (me) {
-        if (!currentAuth()) return null;
+        if (!currentAuth() || sequence < renderedPollSequence) return null;
         if (me.status === 401 || me.status === 403) return rejected();
         if (!me.ok) throw new Error('status ' + me.status);
-        return me.json().then(function () { member = true; memberKey = requestKey; return { caller: { kind: 'member' } }; });
+        return me.json().then(function () { if (!currentAuth() || sequence < renderedPollSequence) return null; member = true; memberKey = requestKey; return { caller: { kind: 'member' } }; });
       });
     }
     // A member key is refused /relaycrew/status, so once known it polls only /relaycrew/me.
-    (memberKey === requestKey ? asMember() : fetch('/relaycrew/status', { headers: { 'x-api-key': requestKey }, cache: 'no-store' })
+    return (memberKey === requestKey ? asMember() : fetch('/relaycrew/status', { headers: { 'x-api-key': requestKey }, cache: 'no-store' })
       .then(function (res) {
-        if (!currentAuth()) return null;
+        if (!currentAuth() || sequence < renderedPollSequence) return null;
         if (res.status === 401) return rejected();
         if (res.status === 403) return asMember();
         if (!res.ok) throw new Error('status ' + res.status);
         return res.json();
       }))
       .then(function (s) {
-        if (!s || !currentAuth()) return;
+        if (!s || !currentAuth()) return null;
+        if (sequence < renderedPollSequence) return s;
+        renderedPollSequence = sequence;
         document.getElementById('keybox').style.display = 'none';
         document.getElementById('app').style.display = '';
         document.getElementById('err').style.display = 'none'; pollError = null;
         if (member) { lastStatus = null; window.RelayWorkspace.update(s); }
         else render(s);
+        return s;
       })
       .catch(function (e) {
-        if (!currentAuth()) return;
+        if (!currentAuth() || sequence < renderedPollSequence) return null;
         var err = document.getElementById('err');
         err.style.display = 'block';
         pollError = e.message; renderPollError();
@@ -1631,6 +1636,7 @@ ${SHARED_HELPERS}
         // The banner lives inside #app, which stays hidden until a first
         // status lands; without this a first poll that fails is a blank page.
         if (document.getElementById('keybox').style.display !== 'block') document.getElementById('app').style.display = '';
+        return null;
       });
   }
 

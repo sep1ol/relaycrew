@@ -20,7 +20,7 @@
   "synthesizeQuotaHeaders": false,
   "distributeSessions": false,
   "advisorEligibility": "strict",
-  "quotaProbeSeconds": 0,
+  "quotaProbeSeconds": 60,
   "autoUpdate": true,
   "autoRedeemResets": false,
   "expiryRouting": {

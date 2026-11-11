@@ -13,6 +13,8 @@ The page itself is public and contains no account data. Requests for data and co
 - Sessions retains conversation details, filters, sorting and account pins.
 - Settings provides threshold controls, configuration reload, quota probes and routing information.
 
+**Refresh** in the administrator **Accounts** view queries provider quotas before updating the cards, including Session, Weekly, and model-specific limits. Failed queries keep the last known readings and show a notice. The server also probes eligible accounts every 60 seconds by default, independently of the dashboard. Existing configurations with `quotaProbeSeconds: 0` require `relaycrew probe 60` to enable that schedule.
+
 The dashboard updates the existing status snapshot every five seconds. Team and history data are fetched when their views need them. Errors remain visible rather than replacing missing data with a healthy status.
 
 ## Language and chart preferences

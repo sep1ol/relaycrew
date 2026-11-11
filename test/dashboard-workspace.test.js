@@ -60,17 +60,17 @@ function boot({ key = 'admin-key', caller = { kind: 'operator', refused: [] }, l
   const { document, $ } = makeDashboardDom(WORKSPACE_HTML);
   const events = {}, requests = [], store = new Map([...(key ? [['relaycrew-dashboard-key', key]] : []), ...(locale ? [['relaycrew-dashboard-locale', locale]] : []), ...stored]);
   const localStorage = { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value), removeItem: key => store.delete(key) };
-  const timers = new Map(); let timerId = 0;
+  const timers = new Map(), intervals = []; let timerId = 0;
   const window = { localStorage, location: { hash }, navigator: {}, getComputedStyle: () => ({ backgroundColor: 'rgb(37, 99, 235)' }), addEventListener(type, handler) { events[type] = handler; }, setTimeout(callback, delay) { timers.set(++timerId, { callback, delay }); return timerId; }, clearTimeout(id) { timers.delete(id); } };
   new Function('document', 'window', I18N_SCRIPT)(document, window);
-  const fetch = (url, init) => new Promise(resolve => requests.push({ url, init, resolve }));
+  const fetch = (url, init) => new Promise((resolve, reject) => requests.push({ url, init, resolve, reject }));
   new Function('document', 'window', 'fetch', WORKSPACE_SCRIPT)(document, window, fetch);
   const status = { caller, accounts: [], sessions: {}, clients: {}, usageDimensions: {}, configuredUsageDimensions: ['project'] };
   const flush = () => new Promise(resolve => setImmediate(resolve));
   const answer = async (status, body) => { const req = requests.shift(); assert.ok(req, 'request expected'); req.resolve({ status, ok: status >= 200 && status < 300, json: async () => body }); await flush(); return req; };
-  if (live) new Function('document', 'window', 'fetch', 'setInterval', 'clearInterval', inlineScripts(renderDashboardHtml()).at(-1))(document, window, fetch, () => 1, () => {});
+  if (live) new Function('document', 'window', 'fetch', 'setInterval', 'clearInterval', inlineScripts(renderDashboardHtml()).at(-1))(document, window, fetch, callback => { intervals.push(callback); return intervals.length; }, () => {});
   else window.RelayWorkspace.update(status);
-  return { $, document, requests, window, status, store, timers, flush, answer, navigate: async view => { window.location.hash = '#' + view; events.hashchange(); await flush(); }, tick: async () => { const [id, timer] = timers.entries().next().value; timers.delete(id); timer.callback(); await flush(); } };
+  return { $, document, requests, window, status, store, timers, intervals, flush, answer, navigate: async view => { window.location.hash = '#' + view; events.hashchange(); await flush(); }, tick: async () => { const [id, timer] = timers.entries().next().value; timers.delete(id); timer.callback(); await flush(); } };
 }
 const emptyPool = { generatedAt: 0, groups: [] };
 const team = () => ({ ok: true, enabled: true, revision: 'rev-1', accounts: [{ id: 'account-id', name: '<img src=x onerror=alert(1)>', provider: 'anthropic' }], members: [{ name: 'marina', accounts: ['account-id'], maxConcurrent: 4, active: 1, disabled: false, usage: { requests: 5 } }] });
@@ -624,4 +624,219 @@ test('locale changes preserve member drafts, checkbox nodes, busy saves, issued 
   assert.equal(page.document.activeElement, page.$('historyChart').querySelectorAll('g')[0]);
   assert.equal(page.$('historyScope').querySelectorAll('option')[0].textContent, 'Clients');
   assert.equal(page.requests.length, 0);
+});
+
+const quotaAccount = (name, used = 0.9, extra = {}) => ({ id: name, name, provider: 'anthropic', type: 'oauth', quota: { unified5h: used, unified7d: used, scopedWeekly: { sonnet: { utilization: used } } }, ...extra });
+function refreshedStatus(page, accounts, rows = accounts.map(account => ({ name: account.name, status: 'ok' }))) {
+  const startedAt = new Date(Date.now() - 1000).toISOString();
+  return { ...page.status, accounts, probe: { lastRunStartedAt: startedAt, accounts: rows.map(row => ({ startedAt, ...row })) } };
+}
+async function quotaPage(poolStatus = 404) {
+  const page = boot({ locale: null, live: true, hash: '#accounts' });
+  const accounts = [quotaAccount('alpha')];
+  await page.answer(200, { ...page.status, accounts });
+  await page.answer(200, { accounts });
+  await page.answer(poolStatus, poolStatus === 200 ? emptyPool : {});
+  return page;
+}
+
+test('admin account refresh probes once, awaits a new status and renders every supported quota window', async () => {
+  const page = await quotaPage();
+  const first = page.$('accountsRefresh').fire('click');
+  const duplicate = page.$('accountsRefresh').fire('click');
+  assert.equal(page.requests.length, 1);
+  assert.equal(page.requests[0].url, '/relaycrew/probe');
+  assert.equal(page.requests[0].init.method, 'POST');
+  assert.equal(page.requests[0].init.headers['x-api-key'], 'admin-key');
+  assert.deepEqual(JSON.parse(page.requests[0].init.body), {});
+  assert.equal(page.$('accountsRefresh').disabled, true);
+  await page.answer(200, { ok: true });
+  assert.equal(page.requests[0].url, '/relaycrew/status');
+  const accounts = [quotaAccount('alpha', 0.2)];
+  await page.answer(200, refreshedStatus(page, accounts));
+  assert.match(page.$('accounts').textContent, /Session20%.*Weekly20%.*Sonnet20%/);
+  assert.equal(page.$('accountsRefresh').disabled, true);
+  assert.equal(page.requests[0].url, '/relaycrew/accounts');
+  await page.answer(200, { accounts });
+  await Promise.all([first, duplicate]);
+  assert.equal(page.$('accountsRefresh').disabled, false);
+  assert.equal(page.$('myAccountsRefresh').disabled, false);
+  assert.equal(page.$('accountMessage').textContent, 'Quota refresh complete for alpha.');
+  assert.equal(page.requests.length, 0);
+});
+
+test('passive five-second updates and member Refresh never probe upstream quotas', async () => {
+  const page = await quotaPage();
+  const now = Date.now;
+  Date.now = () => now() + 6000;
+  try {
+    const poll = page.intervals[0]();
+    await page.answer(200, { ...page.status, accounts: [quotaAccount('alpha')] });
+    assert.equal(page.requests[0].url, '/relaycrew/accounts');
+    await page.answer(200, { accounts: [quotaAccount('alpha')] });
+    await poll;
+  } finally { Date.now = now; }
+  assert.equal(page.requests.length, 0);
+  const member = memberPage();
+  await member.answer(200, { accounts: [] }); await member.answer(200, emptyPool);
+  const refresh = member.$('myAccountsRefresh').fire('click');
+  assert.deepEqual(member.requests.map(request => request.url), ['/relaycrew/accounts']);
+  await member.answer(200, { accounts: [] }); await refresh;
+  await member.$('accountsRefresh').fire('click');
+  assert.equal(member.requests.length, 0);
+});
+
+test('pending metadata reads cannot enable buttons or clear an active quota refresh notice', async () => {
+  const page = await quotaPage();
+  const passive = page.$('myAccountsRefresh').fire('click');
+  const refresh = page.$('accountsRefresh').fire('click');
+  assert.deepEqual(page.requests.map(request => request.url), ['/relaycrew/accounts', '/relaycrew/probe']);
+  await page.answer(200, { accounts: [quotaAccount('alpha')] }); await passive;
+  assert.equal(page.$('accountsRefresh').disabled, true);
+  assert.equal(page.$('myAccountsRefresh').disabled, true);
+  assert.equal(page.$('accountMessage').textContent, 'Refreshing supported quota windows…');
+  await page.answer(200, { ok: true });
+  await page.answer(200, refreshedStatus(page, [quotaAccount('alpha', 0.1)]));
+  await page.answer(200, { accounts: [quotaAccount('alpha')] }); await refresh;
+  assert.equal(page.$('accountsRefresh').disabled, false);
+});
+
+test('quota refresh stops after sign-out or a key change without requesting privileged status', async () => {
+  for (const signOut of [false, true]) {
+    const page = await quotaPage();
+    const refresh = page.$('accountsRefresh').fire('click');
+    if (signOut) await page.$('changeKey').fire('click');
+    else page.store.set('relaycrew-dashboard-key', 'member-key');
+    const before = page.$('accountMessage').textContent;
+    await page.answer(200, { ok: true }); await refresh;
+    assert.equal(page.requests.length, 0);
+    assert.equal(page.$('accountMessage').textContent, before);
+    if (signOut) {
+      assert.equal(page.$('accountsRefresh').disabled, false);
+      assert.equal(page.$('myAccountsRefresh').disabled, false);
+    }
+  }
+});
+
+test('late pre-probe status cannot overwrite quotas or the success notice after refresh', async () => {
+  const page = await quotaPage();
+  const oldPoll = page.window.RelayWorkspace.refresh();
+  const old = page.requests.shift();
+  const refresh = page.$('accountsRefresh').fire('click');
+  await page.answer(200, { ok: true });
+  assert.equal(page.requests[0].url, '/relaycrew/status', 'the refresh cannot join a pre-probe status request');
+  const snapshot = refreshedStatus(page, [quotaAccount('alpha', 0.3)]);
+  await page.answer(200, snapshot);
+  await page.answer(200, { accounts: snapshot.accounts }); await refresh;
+  old.resolve({ ok: true, status: 200, json: async () => ({ ...page.status, accounts: [quotaAccount('stale', 0.99)] }) });
+  await oldPoll;
+  assert.match(page.$('accounts').textContent, /alpha.*Session30%.*Weekly30%/);
+  assert.doesNotMatch(page.$('accounts').textContent, /stale/);
+  assert.equal(page.$('accountMessage').textContent, 'Quota refresh complete for alpha.');
+  assert.equal(page.requests.length, 0);
+});
+
+test('refresh reports failed, timed out, unsupported, disabled and missing checks by name', async () => {
+  const page = await quotaPage();
+  const accounts = ['alpha', 'failed', 'timeout', 'unsupported', 'disabled', 'missing'].map(name => quotaAccount(name, name === 'alpha' ? 0.4 : 0.9, { disabled: name === 'disabled' }));
+  const refresh = page.$('accountsRefresh').fire('click');
+  await page.answer(200, { ok: true });
+  const snapshot = refreshedStatus(page, accounts, [
+    { name: 'alpha', status: 'ok' },
+    { name: 'failed', status: 'error', error: 'upstream refused' },
+    { name: 'timeout', status: 'timeout', error: 'probe timed out' },
+    { name: 'unsupported', status: 'not-applicable' },
+    { name: 'disabled', status: 'ok', startedAt: '2020-01-01T00:00:00Z' },
+  ]);
+  await page.answer(200, snapshot);
+  await page.answer(200, { accounts }); await refresh;
+  assert.equal(page.$('accountMessage').textContent, 'Quota refresh complete for alpha. Not checked: failed (upstream refused), timeout (probe timed out), unsupported, disabled, missing. Last known quotas are still shown.');
+  assert.match(page.$('accountMessage').className, /warn/);
+  assert.match(page.$('accounts').textContent, /alpha.*Session40%.*failed.*Session90%.*timeout.*Session90%/);
+});
+
+test('refresh matches probe results by account ID when providers share an account name', async () => {
+  const page = await quotaPage();
+  const accounts = [
+    quotaAccount('shared', 0.98, { id: 'claude-shared' }),
+    quotaAccount('shared', 0.07, { id: 'codex-shared', provider: 'codex' }),
+  ];
+  const refresh = page.$('accountsRefresh').fire('click');
+  await page.answer(200, { ok: true });
+  await page.answer(200, refreshedStatus(page, accounts, [
+    { id: 'claude-shared', name: 'shared', provider: 'anthropic', status: 'error', error: 'Claude refused' },
+    { id: 'codex-shared', name: 'shared', provider: 'codex', status: 'ok' },
+  ]));
+  await page.answer(200, { accounts }); await refresh;
+  assert.equal(page.$('accountMessage').textContent, 'Quota refresh complete for shared. Not checked: shared (Claude refused). Last known quotas are still shown.');
+});
+
+test('probe and status failures produce visible refresh errors and release controls', async () => {
+  for (const failure of ['probe', 'status']) {
+    const page = await quotaPage();
+    const refresh = page.$('accountsRefresh').fire('click');
+    if (failure === 'probe') await page.answer(500, { error: 'probe failed' });
+    else { await page.answer(200, { ok: true }); await page.answer(503, {}); }
+    await refresh;
+    assert.match(page.$('accountMessage').textContent, /Could not refresh quotas\..*Last known quotas are still shown/);
+    assert.match(page.$('accountMessage').className, /error/);
+    assert.equal(page.$('accountsRefresh').disabled, false);
+    assert.equal(page.requests.length, 0);
+  }
+});
+
+test('quota Refresh remains available without the team account-management API', async () => {
+  const page = boot({ locale: null, live: true, hash: '#accounts' });
+  await page.answer(200, { ...page.status, accounts: [quotaAccount('alpha')] });
+  await page.answer(404, {});
+  await page.answer(404, {});
+  assert.equal(page.$('accountsRefresh').hidden, false);
+  assert.equal(page.$('accountsAdd').hidden, true);
+  const refresh = page.$('accountsRefresh').fire('click');
+  assert.equal(page.requests[0].url, '/relaycrew/probe');
+  await page.answer(200, { ok: true });
+  await page.answer(200, refreshedStatus(page, [quotaAccount('alpha', 0.2)]));
+  await refresh;
+  assert.equal(page.$('accountMessage').textContent, 'Quota refresh complete for alpha.');
+  assert.match(page.$('accounts').textContent, /Session20%/);
+  assert.equal(page.requests.length, 0);
+});
+
+test('metadata failure does not misreport successfully refreshed quotas as stale', async () => {
+  const page = await quotaPage();
+  const refresh = page.$('accountsRefresh').fire('click');
+  await page.answer(200, { ok: true });
+  await page.answer(200, refreshedStatus(page, [quotaAccount('alpha', 0.2)]));
+  await page.answer(500, { error: 'metadata failed' });
+  await refresh;
+  assert.equal(page.$('accountMessage').textContent, 'Quota refresh complete for alpha. Could not refresh account details.');
+  assert.match(page.$('accountMessage').className, /warn/);
+  assert.match(page.$('accounts').textContent, /Session20%/);
+  assert.equal(page.$('accountsRefresh').disabled, false);
+});
+
+test('quota Refresh waits out a pre-probe pool read and fetches the pool again', async () => {
+  const page = await quotaPage(200);
+  const now = Date.now;
+  try {
+    Date.now = () => now() + 16000;
+    page.window.RelayWorkspace.update(page.status);
+  } finally { Date.now = now; }
+  await page.answer(200, { accounts: [quotaAccount('alpha')] });
+  const oldPool = page.requests.shift();
+  assert.equal(oldPool.url, '/relaycrew/accounts/pool');
+  const refresh = page.$('accountsRefresh').fire('click');
+  await page.answer(200, { ok: true });
+  await page.answer(200, refreshedStatus(page, [quotaAccount('alpha', 0.2)]));
+  await page.answer(200, { accounts: [quotaAccount('alpha')] });
+  assert.equal(page.$('accountsRefresh').disabled, true);
+  oldPool.resolve({ ok: true, status: 200, json: async () => emptyPool });
+  await page.flush();
+  assert.equal(page.requests[0].url, '/relaycrew/accounts/pool');
+  await page.answer(200, { generatedAt: Date.now(), groups: [{
+    provider: 'anthropic', totals: [{ key: 'fiveHour', remaining: 0.8, nextResetAt: null }], accounts: [],
+  }] });
+  await refresh;
+  assert.match(page.$('adminPool').textContent, /80% left/);
+  assert.equal(page.$('accountsRefresh').disabled, false);
 });

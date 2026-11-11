@@ -96,6 +96,13 @@ export async function writeJsonAtomic(path, value) {
   }
 }
 
+const DEFAULT_QUOTA_PROBE_SECONDS = 60;
+
+/** @param {{quotaProbeSeconds?: number|null}} config */
+export function resolveQuotaProbeSeconds(config) {
+  return config.quotaProbeSeconds ?? DEFAULT_QUOTA_PROBE_SECONDS;
+}
+
 export function createDefaultConfig() {
   return {
     proxy: {
@@ -108,6 +115,7 @@ export function createDefaultConfig() {
     distributeSessions: 'load',
     sessionTitles: { enabled: false, width: 18 },
     quotaBarPercent: false,
+    quotaProbeSeconds: DEFAULT_QUOTA_PROBE_SECONDS,
     accountSort: 'arranged',
     eventLogging: 'hide',
     defaultClientMode: 'mitm',

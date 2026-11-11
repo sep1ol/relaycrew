@@ -482,7 +482,7 @@ would otherwise sit out the rest of its week holding one.
 The count an account holds comes free with the quota probe — it rides on the
 same `/wham/usage` payload the quota reading does — and shows up as `RC1` on the
 TUI row, a `Reset` line in `relaycrew status`, and a badge on the dashboard
-card. It survives a restart, which matters because the probe is off by default.
+card. The reading survives a restart and refreshes on the quota probe's schedule, every 60 seconds by default.
 
 Only the probe refreshes the count, so a reading can outlive the credit it
 describes — redeemed in the Codex CLI, or expired. The `status` line therefore
@@ -560,9 +560,7 @@ the same surfaces as the
 past its expiry date is dropped from every surface, as is a reading more than
 7 days old.
 
-The probe is off by default, so the count is only as fresh as the last probe:
-`p` in the TUI, or `curl -X POST localhost:3456/relaycrew/probe`, refreshes
-it once.
+The probe refreshes the count every 60 seconds by default. Press `p` in the TUI, click **Refresh** in the dashboard's administrator **Accounts** view, or run `curl -X POST localhost:3456/relaycrew/probe` to refresh it once. An explicit `quotaProbeSeconds: 0` disables background probes.
 
 ### Spending a Claude reset automatically
 

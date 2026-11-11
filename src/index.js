@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { createWriteStream, existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import net from 'node:net';
-import { loadOrCreateConfig, loadConfig, loadConfigPersistingIds, saveConfig, atomicConfigUpdate, getConfigPath, getCrashLogPath, loadState, saveState } from './config.js';
+import { loadOrCreateConfig, loadConfig, resolveQuotaProbeSeconds, loadConfigPersistingIds, saveConfig, atomicConfigUpdate, getConfigPath, getCrashLogPath, loadState, saveState } from './config.js';
 import { installCrashHandlers } from './crash-log.js';
 import { AccountManager, distributionMode, accountRouting } from './account-manager.js';
 import { validateAdaptiveConfig } from './adaptive-distribution.js';
@@ -387,9 +387,6 @@ async function serverCommand() {
   // object to reconfigure.
   const sessionTitles = new SessionTitles(config.sessionTitles);
 
-  // Restore quota observed in a previous run so a restart doesn't lose rotation
-  // state (passive — we never call the API to re-learn it). Stale windows are
-  // cleared automatically on first use by _clearExpiredQuotas.
   const savedState = await loadState().catch(err => {
     console.error(`[RelayCrew] Could not read saved state: ${err.message}`);
     return null;
@@ -512,7 +509,6 @@ async function serverCommand() {
   const headless = args.includes('--headless') || args.includes('--no-tui');
   const useTUI = !headless && process.stdout.isTTY && process.stdin.isTTY;
 
-  // Opt-in background quota probe (config.quotaProbeSeconds, default 0 = off).
   let prober = null;
   // Opt-in keep-warm scheduler (interval or persisted reset-target schedule).
   let warmer = null;
@@ -645,9 +641,9 @@ async function serverCommand() {
       else { sx.disable(); await sx.setMode(diskSxMode); }
     }
     if (prober) {
-      const ms = (diskConfig.quotaProbeSeconds || 0) * 1000;
+      const ms = resolveQuotaProbeSeconds(diskConfig) * 1000;
+      config.quotaProbeSeconds = diskConfig.quotaProbeSeconds;
       if (ms !== prober.intervalMs) {
-        config.quotaProbeSeconds = diskConfig.quotaProbeSeconds || 0;
         prober.reschedule(ms);
       }
     }
@@ -890,10 +886,12 @@ async function serverCommand() {
     callbackSync: credentialSync.summary(),
     probe: prober?.getStatus() || {
       enabled: false,
-      intervalSeconds: config.quotaProbeSeconds || 0,
+      intervalSeconds: resolveQuotaProbeSeconds(config),
       running: false,
       accounts: accountManager.accounts.map(account => ({
+        id: account.id,
         name: account.name,
+        provider: providerOf(account),
         // The Prober's own rule, not a copy of it (#512).
         status: probeApplicable(account) ? 'never' : 'not-applicable',
         lastProbedAt: null,
@@ -994,9 +992,8 @@ async function serverCommand() {
   quotaSaveInterval = setInterval(persistQuotaState, 60_000);
   quotaSaveInterval.unref?.();
 
-  // Start the opt-in quota probe (no-op when quotaProbeSeconds is 0).
   prober = new Prober(accountManager, {
-    intervalMs: (config.quotaProbeSeconds || 0) * 1000,
+    intervalMs: resolveQuotaProbeSeconds(config) * 1000,
     profileFn: fetchProfile,
   });
   // The web dashboard's one-shot probe button uses the same zero-spend action
@@ -1009,7 +1006,7 @@ async function serverCommand() {
   // probe off it binds only after a manual `p` refresh. Said once at start,
   // like the config warnings in config-ops.js, rather than silently leaving a
   // budget unenforced.
-  if (!(config.quotaProbeSeconds > 0) && accountManager.accounts.some(a => a.maxSpend != null)) {
+  if (!(resolveQuotaProbeSeconds(config) > 0) && accountManager.accounts.some(a => a.maxSpend != null)) {
     console.error('[RelayCrew] accounts[].maxSpend is set but the quota probe is off (quotaProbeSeconds = 0) — the spend figure it is judged against is only refreshed by the probe, so the cap only binds after a manual `p` refresh; run `relaycrew probe <seconds>`');
   }
 
@@ -2183,7 +2180,7 @@ async function probeCommand() {
   const arg = args[1];
 
   if (arg === undefined) {
-    const cur = config.quotaProbeSeconds || 0;
+    const cur = resolveQuotaProbeSeconds(config);
     console.log(cur > 0 ? `Quota probe: every ${cur}s` : 'Quota probe: off (passive only)');
     console.log('Set with: relaycrew probe <off|seconds>   e.g. relaycrew probe 300');
     return;

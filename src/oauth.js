@@ -629,6 +629,19 @@ export async function fetchUsage(accessToken, routing = null, { fetchImpl = prox
  * the mapping is testable without a network round trip.
  */
 export function normalizeUsagePayload(data) {
+  let fiveHour = normalizeUsageBucket(data?.five_hour);
+  let sevenDay = normalizeUsageBucket(data?.seven_day);
+  for (const limit of Array.isArray(data?.limits) ? data.limits : []) {
+    if (!limit || limit.scope != null) continue;
+    const bucket = normalizeUsageBucket({ utilization: limit.percent, resets_at: limit.resets_at });
+    if (bucket?.utilization == null) continue;
+    if (fiveHour?.utilization == null && limit.kind === 'session' && limit.group === 'session') {
+      fiveHour = bucket;
+    }
+    if (sevenDay?.utilization == null && limit.kind === 'weekly_all' && limit.group === 'weekly') {
+      sevenDay = bucket;
+    }
+  }
   // Every model-scoped weekly cap the payload enumerated, keyed by the family
   // name upstream used. The two families with dedicated fields are read from
   // the same enumeration (the legacy seven_day_<model> keys read null on
@@ -637,8 +650,8 @@ export function normalizeUsagePayload(data) {
   // family the payload named, so one upstream adds is metered without a release.
   const scopedWeekly = scopedWeeklyLimits(data);
   return {
-    fiveHour: normalizeUsageBucket(data?.five_hour),
-    sevenDay: normalizeUsageBucket(data?.seven_day),
+    fiveHour,
+    sevenDay,
     sevenDaySonnet: normalizeUsageBucket(data?.seven_day_sonnet) || scopedWeekly.sonnet || null,
     sevenDayFable: scopedWeekly.fable || null,
     scopedWeekly,

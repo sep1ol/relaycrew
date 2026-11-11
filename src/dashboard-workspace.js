@@ -17,7 +17,7 @@
  * @property {Record<string, UsageEntry>} [clients]
  * @property {Record<string, Record<string, UsageEntry>>} [usageDimensions]
  * @property {string[]} [configuredUsageDimensions]
- * @property {{running?: boolean}} [probe]
+ * @property {{running?: boolean, lastRunStartedAt?: string|null, accounts?: {id?: string|null, name: string, provider?: string, status?: string, error?: string|null, startedAt?: string|null}[]}} [probe]
  * @property {SessionPin[]} [sessionPins]
  *
  * @typedef {{id: string, name: string, provider: string, disabled?: boolean, owner?: string|null, sharing?: string, disabledBy?: string}} TeamAccount
@@ -61,7 +61,7 @@
  *
  * @typedef {{getElementById: (id: string) => any, querySelectorAll: (selector: string) => any[], createElement: (tag: string) => any, createElementNS: (namespace: string, tag: string) => any, title: string, documentElement?: any, activeElement?: any, hidden?: boolean, addEventListener?: (name: string, listener: () => void) => void}} WorkspaceDocument
  * @typedef {{preventDefault: () => void, key?: string, currentTarget: any}} WorkspaceEvent
- * @typedef {{update: (status: WorkspaceStatus) => void, failed: (text: string) => void, signedOut: () => void, accountControls: (account: WorkspaceAccount, target: any) => boolean, renderAccounts?: () => void, refresh?: () => void}} WorkspaceController
+ * @typedef {{update: (status: WorkspaceStatus) => void, failed: (text: string) => void, signedOut: () => void, accountControls: (account: WorkspaceAccount, target: any) => boolean, renderAccounts?: () => void, refresh?: () => Promise<WorkspaceStatus|null>}} WorkspaceController
  * @typedef {{location: {hash: string}, navigator: {clipboard?: {writeText: (text: string) => Promise<void>}}, addEventListener: (name: string, listener: () => void) => void, setTimeout: (callback: () => void, delay: number) => number, clearTimeout: (timer: number) => void, getComputedStyle?: (element: any) => {backgroundColor: string, getPropertyValue?: (key: string) => string}, RelayWorkspace: WorkspaceController}} WorkspaceWindow
  * @typedef {{workspaceDistribution: typeof workspaceDistribution, historyDistribution: typeof historyDistribution, validHistory: typeof validHistory, workspaceAdmin: typeof workspaceAdmin, historyPath: typeof historyPath, createSeriesColors: typeof createSeriesColors}} WorkspaceHelpers
  * @typedef {{getItem: (key: string) => string|null, setItem: (key: string, value: string) => void}} ColorStorage
@@ -190,8 +190,10 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     pool: null, poolAt: 0 };
   /** @type {Promise<void>|null} */
   var teamRequest = null;
-  /** @type {Promise<void>|null} */
+  /** @type {Promise<boolean>|null} */
   var accountsRequest = null;
+  /** @type {Promise<void>|null} */
+  var accountQuotaRequest = null;
   /** @type {Promise<void>|null} */
   var poolRequest = null;
   /** @type {(() => string)|null} */
@@ -455,7 +457,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     state.status = status; state.lastGood = Date.now(); connectionFailure = null;
     navigate();
     $('summary').hidden = memberMode();
-    $('accountsRefresh').hidden = !admin() || !accountApiAvailable;
+    $('accountsRefresh').hidden = !admin();
     $('accountsAdd').hidden = !admin() || !accountApiAvailable;
     ['.gateway-pill', '.sidebar-note', '.nav-caption'].forEach(function (selector) {
       document.querySelectorAll(selector).forEach(function (element) { element.hidden = memberMode(); });
@@ -486,12 +488,12 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     state.authEpoch++; state.historySeq++; state.previewSeq++;
     teamRequest = null; state.submitting = false; state.editing = null; state.editRevision = null; state.action = null;
     state.teamAt = 0; state.historyAt = 0; state.previewAt = 0; state.lastGood = 0; connectionFailure = null;
-    state.accountRows = null; state.accountsAt = 0; accountsRequest = null; accountApiAvailable = true;
+    state.accountRows = null; state.accountsAt = 0; accountsRequest = null; accountQuotaRequest = null; accountApiAvailable = true;
     state.pool = null; state.poolAt = 0; poolRequest = null; poolApiAvailable = true; poolFailure = null;
     $('memberPool').textContent = ''; $('adminPool').textContent = '';
     $('memberPoolSection').hidden = true; $('adminPoolSection').hidden = true;
     state.accountBusy = false; state.removing = null;
-    $('myAccountsContent').textContent = ''; $('myAccountsRefresh').disabled = false; $('accountRemoveConfirm').disabled = false;
+    $('myAccountsContent').textContent = ''; $('myAccountsRefresh').disabled = false; $('accountsRefresh').disabled = false; $('accountRemoveConfirm').disabled = false;
     ['accounts', 'summary', 'problems', 'overviewStats', 'providerSummary', 'overviewAttention', 'routes', 'clients', 'dimensionsWrap', 'sessions', 'sessionPinsList', 'foot'].forEach(function (id) { $(id).textContent = ''; });
     $('teamAdd').disabled = true; $('teamRefresh').disabled = false; $('memberSave').disabled = false; $('confirmAction').disabled = false; $('historyRefresh').disabled = false;
     $('pinSave').disabled = true;
@@ -509,29 +511,88 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     renderTeam();
     if (focusKey) document.querySelectorAll('[data-workspace-focus]').forEach(function (element) { if (element.getAttribute('data-workspace-focus') === focusKey) element.focus(); });
   }
-  /** @returns {Promise<void>} */
+  /** @returns {Promise<boolean>} */
   function loadAccounts() {
     if (accountsRequest) return accountsRequest;
-    if ((!memberMode() && !admin()) || !accountApiAvailable) return Promise.resolve();
+    if ((!memberMode() && !admin()) || !accountApiAvailable) return Promise.resolve(false);
     var context = authContext();
     state.accountsAt = Date.now(); $('myAccountsRefresh').disabled = true; $('accountsRefresh').disabled = true;
     if (window.RelayWorkspace.renderAccounts) window.RelayWorkspace.renderAccounts();
-    message('accountMessage', function () { return t('Updating accounts…'); });
+    if (!accountQuotaRequest) message('accountMessage', function () { return t('Updating accounts…'); });
     accountsRequest = (async function () {
       try {
         /** @type {{accounts: TeamAccount[]}} */
         var data = await request('/relaycrew/accounts', undefined, context);
         if (!Array.isArray(data.accounts)) throw presentationError(function () { return t('Invalid accounts response.'); });
         state.accountRows = data.accounts; repaintAccounts();
-        message('accountMessage', function () { return ''; });
+        if (!accountQuotaRequest) message('accountMessage', function () { return ''; });
+        return true;
       } catch (error) {
-        if (!currentAuth(context)) return;
+        if (!currentAuth(context)) return false;
         if (admin() && error && typeof error === 'object' && 'status' in error && error.status === 404) {
-          accountApiAvailable = false; $('accountsRefresh').hidden = true; $('accountsAdd').hidden = true; state.accountRows = []; repaintAccounts(); message('accountMessage', function () { return ''; });
-        } else message('accountMessage', function () { return t('Could not refresh accounts. {error} Use "Refresh" to try again.', { error: errorText(error) }); }, 'error');
-      } finally { if (currentAuth(context)) { accountsRequest = null; $('myAccountsRefresh').disabled = false; $('accountsRefresh').disabled = false; } }
+          accountApiAvailable = false; $('accountsAdd').hidden = true; state.accountRows = []; repaintAccounts(); if (!accountQuotaRequest) message('accountMessage', function () { return ''; });
+        } else if (!accountQuotaRequest) message('accountMessage', function () { return t('Could not refresh accounts. {error} Use "Refresh" to try again.', { error: errorText(error) }); }, 'error');
+        return false;
+      } finally { if (currentAuth(context)) { accountsRequest = null; updateAccountRefreshButtons(); } }
     })();
     return accountsRequest;
+  }
+  function updateAccountRefreshButtons() {
+    $('myAccountsRefresh').disabled = !!(accountsRequest || accountQuotaRequest);
+    $('accountsRefresh').disabled = !!(accountsRequest || accountQuotaRequest);
+  }
+  /** @returns {Promise<void>} */
+  function refreshAccountQuotas() {
+    if (accountQuotaRequest) return accountQuotaRequest;
+    if (!admin()) return Promise.resolve();
+    var context = authContext();
+    message('accountMessage', function () { return t('Refreshing supported quota windows…'); });
+    accountQuotaRequest = (async function () {
+      try {
+        await request('/relaycrew/probe', {}, context);
+        requireCurrentAuth(context);
+        var snapshot = await window.RelayWorkspace.refresh?.();
+        requireCurrentAuth(context);
+        if (!snapshot) throw presentationError(function () { return t('Could not read the refreshed gateway status.'); });
+        var metadataFailed = false;
+        if (accountApiAvailable) {
+          if (accountsRequest) await accountsRequest;
+          requireCurrentAuth(context);
+          metadataFailed = !(await loadAccounts()) && accountApiAvailable;
+          requireCurrentAuth(context);
+        }
+        if (poolRequest) await poolRequest;
+        requireCurrentAuth(context);
+        await loadPool(true);
+        requireCurrentAuth(context);
+        var rows = snapshot.probe?.accounts || [], startedAt = Date.parse(snapshot.probe?.lastRunStartedAt || '');
+        /** @type {string[]} */
+        var checked = [];
+        /** @type {string[]} */
+        var unchecked = [];
+        (snapshot.accounts || []).forEach(function (account) {
+          var row = rows.find(function (entry) {
+            if (account.id && entry.id) return entry.id === account.id;
+            return entry.name === account.name && (!entry.provider || entry.provider === account.provider);
+          });
+          var fresh = Number.isFinite(startedAt) && Date.parse(row?.startedAt || '') >= startedAt;
+          if (!account.disabled && fresh && row?.status === 'ok') checked.push(account.name);
+          else unchecked.push(account.name + (fresh && row?.error ? ' (' + row.error + ')' : ''));
+        });
+        message('accountMessage', function () {
+          var text = checked.length ? t('Quota refresh complete for {accounts}.', { accounts: checked.join(', ') }) : '';
+          if (unchecked.length) text = (text ? text + ' ' : '') + t('Not checked: {accounts}. Last known quotas are still shown.', { accounts: unchecked.join(', ') });
+          text = text || t('No eligible accounts were checked. Last known quotas are still shown.');
+          return text + (metadataFailed ? ' ' + t('Could not refresh account details.') : '');
+        }, unchecked.length || !checked.length || metadataFailed ? 'warn' : 'ok');
+      } catch (error) {
+        if (currentAuth(context)) message('accountMessage', function () { return t('Could not refresh quotas. {error} Last known quotas are still shown.', { error: errorText(error) }); }, 'error');
+      } finally {
+        if (currentAuth(context)) { accountQuotaRequest = null; updateAccountRefreshButtons(); }
+      }
+    })();
+    updateAccountRefreshButtons();
+    return accountQuotaRequest;
   }
   /** @param {TeamAccount} account */
   function sharingLabel(account) { return account.sharing === 'private' ? t('Private') : t('Pool'); }
@@ -806,7 +867,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     resetAccountLogin(); $('accountLoginProvider').value = 'claude'; $('accountLoginSharing').value = 'private'; renderAccountLogin(); $('accountLoginDialog').showModal();
   }); });
   $('myAccountsRefresh').addEventListener('click', loadAccounts);
-  $('accountsRefresh').addEventListener('click', loadAccounts);
+  $('accountsRefresh').addEventListener('click', refreshAccountQuotas);
   $('accountLoginSharing').addEventListener('change', renderAccountLogin);
   ['accountLoginCancel', 'accountLoginClose'].forEach(function (id) { $(id).addEventListener('click', cancelAccountLogin); });
   $('accountLoginDialog').addEventListener('cancel', /** @param {WorkspaceEvent} event */ function (event) { event.preventDefault(); cancelAccountLogin(); });

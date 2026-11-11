@@ -1,10 +1,10 @@
 # Quota
 
-How RelayCrew learns each account's quota, the two optional background jobs, and what happens when everything is spent.
+How RelayCrew learns each account's quota, refreshes idle accounts, and handles spent limits.
 
 ## How quota is observed
 
-RelayCrew is **passive** by default: it reads `anthropic-ratelimit-unified-*` headers off the responses that flow through it. An account that hasn't served a request yet shows unknown quota until rotation first reaches it.
+RelayCrew reads `anthropic-ratelimit-unified-*` headers from responses and queries provider usage endpoints every 60 seconds by default. The background probe keeps idle accounts fresh without waiting for rotation to reach them. Accounts without a supported usage endpoint learn quota from their traffic.
 
 Observed quota is persisted to `relaycrew.state.json` next to the config, so rotation state survives a restart. Stale windows are discarded automatically, and the file is safe to delete — quota is simply re-learned from traffic.
 
@@ -20,21 +20,24 @@ Remote callers authenticate exactly like the other control endpoints:
 curl -H "x-api-key: $RELAYCREW_API_KEY" https://proxy.example.com/relaycrew/quota
 ```
 
-The optional quota probe also fills missing tier metadata on its first successful refresh. Tier metadata is persisted with observed quota in `relaycrew.state.json`, so it survives subsequent restarts.
+The quota probe also fills missing tier metadata on its first successful refresh. Tier metadata is persisted with observed quota in `relaycrew.state.json`, so it survives subsequent restarts.
 
 ## Quota probe
 
-If you'd rather keep idle accounts' quota fresh, enable the background probe:
+The server probes eligible accounts every 60 seconds by default, even when no dashboard is open. Change the interval with:
 
 ```bash
+relaycrew probe 60     # refresh every minute
 relaycrew probe 300    # refresh every 300s
-relaycrew probe off    # back to passive (default)
+relaycrew probe off    # disable background probes
 relaycrew probe        # show current setting
 ```
 
-The **Quota probe** row on the TUI settings screen (`g`) does the same thing, and `p` on the main screen is a one-shot refresh of every account.
+An existing configuration with `"quotaProbeSeconds": 0` stays off. Run `relaycrew probe 60` to enable minute-by-minute checks on that installation.
 
-It reads each OAuth account's utilization from its provider's read-only usage endpoint, which reports quota **without consuming any message quota**. Anthropic accounts use `/api/oauth/usage`; Codex accounts use ChatGPT's internal `/backend-api/wham/usage` endpoint and require their `ChatGPT-Account-Id`. API-key and third-party accounts are skipped. The Codex endpoint is not part of the public OpenAI API and may change without notice. Minimum interval is 30s. Changing it takes effect on a running server immediately.
+The **Quota probe** row on the TUI settings screen (`g`) changes the same setting. Press `p` on the main screen or click **Refresh** in the dashboard's administrator **Accounts** view to query all supported quota windows again. Manual refresh waits for an active probe cycle instead of starting duplicate requests. A failed account keeps its last known readings.
+
+It reads each OAuth account's utilization from its provider's read-only usage endpoint, which reports quota **without consuming any message quota**. Anthropic accounts use `/api/oauth/usage`; Codex accounts use ChatGPT's internal `/backend-api/wham/usage` endpoint and require their `ChatGPT-Account-Id`. Supported third-party backends use their own quota endpoints. Disabled accounts, accounts with rejected refresh tokens, and accounts without a supported endpoint are skipped. The Codex endpoint is not part of the public OpenAI API and may change without notice. Minimum interval is 30s. Changing it takes effect on a running server immediately.
 
 The probe is also the only source for the **Sonnet 7-day** bucket, when your plan exposes it. The Fable weekly bucket arrives passively in the response headers (`anthropic-ratelimit-unified-7d_oi-*`), so Fable-aware routing works without turning the probe on. Both families are read from the payload's `limits[]`, where upstream enumerates the model-scoped weekly caps an account actually has.
 

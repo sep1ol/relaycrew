@@ -1,11 +1,5 @@
-// Opt-in background quota probe.
-//
-// DISABLED BY DEFAULT. When enabled (config.quotaProbeSeconds > 0), periodically
-// reads an OAuth account's quota zero-spend /api/oauth/usage endpoint so idle
-// accounts' utilization/reset stay fresh without waiting to rotate onto them.
-// A sanctioned active-upstream feature (the other is the opt-in keep-warm
-// scheduler, warmer.js); the proxy is otherwise passive. Unlike keep-warm, this
-// probe reads a zero-spend endpoint and never consumes message quota.
+// Background quota probe, scheduled every 60s by default; quotaProbeSeconds: 0 disables it.
+// Reads supported providers' quota endpoints without consuming message quota.
 
 import { fetchUsage } from './oauth.js';
 import { fetchBackendQuota, hasBackendQuota } from './backend-quota.js';
@@ -62,7 +56,8 @@ export class Prober {
     this.timeoutMs = timeoutMs;
     this.log = log;
     this.timer = null;
-    this._running = false;
+    /** @type {Promise<void>|null} */
+    this._activeProbe = null;
     this.lastRunStartedAt = null;
     this.lastRunFinishedAt = null;
     this.nextRunAt = this.intervalMs > 0 ? Date.now() + this.intervalMs : null;
@@ -99,20 +94,20 @@ export class Prober {
     this.nextRunAt = null;
   }
 
-  /** Probe every OAuth account once. Overlapping cycles are skipped. */
-  async probeAll() {
-    if (this._running) return;
-    this._running = true;
+  /** Probe every eligible account once. Overlapping callers await the same cycle. */
+  probeAll() {
+    if (this._activeProbe) return this._activeProbe;
     this.lastRunStartedAt = Date.now();
     this.nextRunAt = this.intervalMs > 0 ? this.lastRunStartedAt + this.intervalMs : null;
-    try {
+    this._activeProbe = Promise.resolve().then(async () => {
       const accounts = this.am.accounts.filter(account =>
         this._probeable(account) && (this._isProbeTarget(account) || this._isCodexProbeTarget(account) || this._isBackendTarget(account)));
       await Promise.all(accounts.map(account => this.probeAccount(account)));
-    } finally {
+    }).finally(() => {
       this.lastRunFinishedAt = Date.now();
-      this._running = false;
-    }
+      this._activeProbe = null;
+    });
+    return this._activeProbe;
   }
 
   /**
@@ -250,14 +245,16 @@ export class Prober {
     return {
       enabled: this.intervalMs > 0,
       intervalSeconds: Math.round(this.intervalMs / 1000),
-      running: this._running,
+      running: this._activeProbe !== null,
       lastRunStartedAt: iso(this.lastRunStartedAt),
       lastRunFinishedAt: iso(this.lastRunFinishedAt),
       nextRunAt: iso(this.nextRunAt),
       accounts: this.am.accounts.map(account => {
-        const status = this.accountStatus.get(account.name);
+        const status = this.accountStatus.get(account.id || account);
         return {
+          id: account.id,
           name: account.name,
+          provider: providerOf(account),
           status: probeApplicable(account) ? (status?.status || 'never') : 'not-applicable',
           lastProbedAt: iso(status?.finishedAt),
           startedAt: iso(status?.startedAt),
@@ -269,8 +266,8 @@ export class Prober {
   }
 
   _recordAccount(account, status) {
-    this.accountStatus.set(account.name, {
-      ...(this.accountStatus.get(account.name) || {}),
+    this.accountStatus.set(account.id || account, {
+      ...(this.accountStatus.get(account.id || account) || {}),
       ...status,
     });
   }

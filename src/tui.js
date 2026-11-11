@@ -19,6 +19,7 @@ import { sanitizeText, safeLine } from './safe-text.js';
 // The setting rules live in one module; the CLI, the MCP tools and this screen
 // all read them from there, so they cannot drift apart (#426).
 import { MAX_PROBE_SECONDS, ROUTE_COLORS } from './config-ops.js';
+import { resolveQuotaProbeSeconds } from './config.js';
 import { isLocalUpstream } from './provider.js';
 import { hyperlink, clipboardSequence } from './osc.js';
 /** @typedef {import('./login-flow.js').LoginPrompt} LoginPrompt */
@@ -1305,7 +1306,7 @@ export class TUI {
       label: 'Quota probe',
       hint: '←→ ±30s',
       value: () => {
-        const probe = this.config.quotaProbeSeconds || 0;
+        const probe = resolveQuotaProbeSeconds(this.config);
         return probe > 0 ? green(`${probe}s`) : gray('off (passive)');
       },
       left: () => this._nudgeProbe(-30),
@@ -1553,7 +1554,7 @@ export class TUI {
   }
 
   _nudgeProbe(deltaSec) {
-    const cur = this.config.quotaProbeSeconds || 0;
+    const cur = resolveQuotaProbeSeconds(this.config);
     const next = Math.max(0, cur + deltaSec);
     if (next !== cur) this._doSetProbe(String(next));
   }
