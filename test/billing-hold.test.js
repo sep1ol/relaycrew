@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { AccountManager } from '../src/account-manager.js';
-import { createProxyServer } from '../src/server.js';
+import { createProxyServer, computeRetryAfter } from '../src/server.js';
 import { normalizeCodexUsagePayload } from '../src/codex-usage.js';
 import { BILLING_RECHECK_SECONDS } from '../src/billing.js';
 
@@ -182,6 +182,15 @@ test('a member on a dry free pool sees the pool message without account names or
   assert.ok(!result.text.includes('private-free-account'));
   assert.ok(!result.text.includes('unpermitted-paid'));
   assert.equal(result.json().error.plan_type, 'free');
+});
+
+test('billing retry intervals use one clock snapshot for the one-hour ceiling', t => {
+  const am = new AccountManager([codexAccount(1)], 0.98);
+  const now = Date.now();
+  am.holdBilling(0, { reason: 'exhausted', until: now + 27 * 86400_000, plan: 'free' });
+  let reads = 0;
+  t.mock.method(Date, 'now', () => now + reads++);
+  assert.equal(computeRetryAfter(am, am.accounts, 'gpt-6-luna'), BILLING_RECHECK_SECONDS);
 });
 
 test('a mixed pool caps retry-after at an hour while the message keeps the reset date', async t => {

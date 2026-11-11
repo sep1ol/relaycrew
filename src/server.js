@@ -4927,14 +4927,15 @@ export function rewriteModel(body, modelMap) {
  * @param {import('./account-manager.js').AccountManager} accountManager
  * @param {Record<string, any>} account
  * @param {string|null|undefined} model
+ * @param {number} now
  * @returns {any[]}
  */
-function blockingResets(accountManager, account, model) {
+function blockingResets(accountManager, account, model, now) {
   const q = account.quota || {};
   /** @type {any[]} */
   const resets = [account.rateLimitedUntil, account.entitlementDeniedUntil, account.routingFailedUntil,
     account.credentialRejectedUntil];
-  if (q.billingHold) resets.push(Math.min(q.billingHold.until, Date.now() + BILLING_RECHECK_SECONDS * 1000));
+  if (q.billingHold) resets.push(Math.min(q.billingHold.until, now + BILLING_RECHECK_SECONDS * 1000));
 
   if (q.unified5h != null && q.unified5h >= accountManager.thresholdFor('unified5h')) {
     resets.push(q.unified5hReset);
@@ -5039,7 +5040,7 @@ export function computeRetryAfter(accountManager, candidates, model = null) {
   for (const acct of candidates) {
     if (acct.disabled || acct.status === 'error') continue;
     let blockedFor = 0;
-    for (const reset of blockingResets(accountManager, acct, model)) {
+    for (const reset of blockingResets(accountManager, acct, model, now)) {
       const ms = new Date(reset).getTime() - now;
       // Skips what will not parse (NaN fails both comparisons) and what has
       // already lapsed: a hold that expired is not a hold.
