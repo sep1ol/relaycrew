@@ -26,7 +26,7 @@ export function makeDashboardDom(html) {
     getAttribute(key) { return this.attrs[key] ?? null; }
     removeAttribute(key) { delete this.attrs[key]; }
     addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }
-    async fire(type, extra = {}) { for (const handler of this.listeners[type] || []) await handler.call(this, { preventDefault() {}, currentTarget: this, ...extra }); }
+    async fire(type, extra = {}) { for (const handler of this.listeners[type] || []) await handler.call(this, { preventDefault() {}, currentTarget: this, target: this, ...extra }); }
     click() { return this.fire('click'); }
     matches(selector) {
       if (selector === '*') return true;
@@ -38,6 +38,7 @@ export function makeDashboardDom(html) {
     }
     querySelectorAll(selector) { return this.children.flatMap(child => [child, ...child.querySelectorAll('*')]).filter(child => child.matches(selector)); }
     querySelector(selector) { return this.querySelectorAll(selector)[0]; }
+    contains(element) { return element === this || this.children.some(child => child.contains(element)); }
     showModal() { this.open = true; }
     close() { this.open = false; this.fire('close'); }
     reset() {}
@@ -61,6 +62,7 @@ export function makeDashboardDom(html) {
   document = {
     documentElement: root, activeElement: null, title: '', getElementById: id => ids.get(id),
     querySelectorAll: selector => root.querySelectorAll(selector), createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag),
+    addEventListener: (type, handler) => root.addEventListener(type, handler),
   };
   return { document, $: id => ids.get(id), Element };
 }

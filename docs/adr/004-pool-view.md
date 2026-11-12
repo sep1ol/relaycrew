@@ -1,6 +1,7 @@
 # ADR-004: Members see the pool's remaining quota
 
 - **Status:** accepted
+  Decision 6 superseded by ADR-006.
 - **Date:** 2026-10-30
 - **Deciders:** sep1ol (owner)
 - **Layers:** gateway / dashboard
