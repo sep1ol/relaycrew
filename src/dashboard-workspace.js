@@ -814,7 +814,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
         var row = node('li', 'pool-account'), dot = node('span', 'pool-state ' + (account.state === 'ok' ? 'ok' : account.state === 'limited' ? 'warn' : account.state === 'error' ? 'bad' : 'none'));
         var stateLabel = account.state === 'disabled' ? t('Disabled') : account.state === 'limited' ? t('Limited') : account.state === 'error' ? t('Error') : t('Ready');
         dot.setAttribute('role', 'img'); dot.setAttribute('aria-label', stateLabel); dot.title = stateLabel; row.appendChild(dot);
-        var info = node('span', 'pool-account-info', (account.sharing === 'team' ? t('team') : account.owner || t('team')) + ' · ' + (account.plan || t('—')));
+        var info = node('span', 'pool-account-info', (account.sharing === 'team' ? t('team') : account.owner || t('team')) + (account.plan ? ' · ' + account.plan : ''));
         if (account.ownerIsViewer) info.appendChild(node('small', '', t('yours')));
         if (!account.usable) info.appendChild(node('small', '', t('not in your access')));
         var readings = account.windows.map(function (window) { return window.remaining; }).filter(function (value) { return value !== null; });

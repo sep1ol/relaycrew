@@ -164,8 +164,8 @@ test('member boot renders pool provider minima and compact totals and account li
   const popover = page.$('memberPoolPopover'), text = popover.textContent;
   assert.match(text, /Claude1 of 2 ready5h70% left · 1h 20mWeek · Fable15% left/);
   assert.match(text, /other · Max 20xnot in your accessupdated 2h ago15%/);
-  assert.match(text, /marina · —yours\?/);
-  assert.match(text, /Grok1 of 1 readyNo usage signal from this provider.*team · —\?/);
+  assert.match(text, /marinayours\?/);
+  assert.match(text, /Grok1 of 1 readyNo usage signal from this provider.*team\?/);
   assert.match(text, /Shared accounts plus your private ones\./);
   assert.deepEqual(popover.querySelectorAll('[role="meter"]').map(meter => meter.getAttribute('aria-valuenow')), ['70', '15', '90', '10', '80']);
   assert.deepEqual(popover.querySelectorAll('.pool-state').map(dot => dot.getAttribute('aria-label')), ['Ready', 'Limited', 'Ready']);
