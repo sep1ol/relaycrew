@@ -59,11 +59,13 @@
  * @property {boolean} loginBusy
  * @property {number} loginEpoch
  *
- * @typedef {{getElementById: (id: string) => any, querySelectorAll: (selector: string) => any[], createElement: (tag: string) => any, createElementNS: (namespace: string, tag: string) => any, title: string, documentElement?: any, activeElement?: any, hidden?: boolean, addEventListener?: (name: string, listener: () => void) => void}} WorkspaceDocument
- * @typedef {{preventDefault: () => void, key?: string, currentTarget: any}} WorkspaceEvent
+ * @typedef {string|{svg: Record<string, string>, path: Record<string, string>}} PoolIcon
+ * @typedef {{provider: import('./pool-view.js').PoolProvider, label: string, icon: PoolIcon, remaining: number|null, tone: 'ok'|'warn'|'bad'|'none', ready: number, total: number}} PoolPillGroup
+ * @typedef {{getElementById: (id: string) => any, querySelectorAll: (selector: string) => any[], createElement: (tag: string) => any, createElementNS: (namespace: string, tag: string) => any, title: string, documentElement?: any, activeElement?: any, hidden?: boolean, addEventListener?: (name: string, listener: (event: WorkspaceEvent) => void, capture?: boolean) => void}} WorkspaceDocument
+ * @typedef {{preventDefault: () => void, key?: string, currentTarget: any, target?: any, relatedTarget?: any, pointerType?: string}} WorkspaceEvent
  * @typedef {{update: (status: WorkspaceStatus) => void, failed: (text: string) => void, signedOut: () => void, accountControls: (account: WorkspaceAccount, target: any) => boolean, renderAccounts?: () => void, refresh?: () => Promise<WorkspaceStatus|null>}} WorkspaceController
- * @typedef {{location: {hash: string}, navigator: {clipboard?: {writeText: (text: string) => Promise<void>}}, addEventListener: (name: string, listener: () => void) => void, setTimeout: (callback: () => void, delay: number) => number, clearTimeout: (timer: number) => void, getComputedStyle?: (element: any) => {backgroundColor: string, getPropertyValue?: (key: string) => string}, RelayWorkspace: WorkspaceController}} WorkspaceWindow
- * @typedef {{workspaceDistribution: typeof workspaceDistribution, historyDistribution: typeof historyDistribution, validHistory: typeof validHistory, workspaceAdmin: typeof workspaceAdmin, historyPath: typeof historyPath, createSeriesColors: typeof createSeriesColors}} WorkspaceHelpers
+ * @typedef {{location: {hash: string}, navigator: {clipboard?: {writeText: (text: string) => Promise<void>}}, innerWidth?: number, innerHeight?: number, addEventListener: (name: string, listener: () => void) => void, setTimeout: (callback: () => void, delay: number) => number, clearTimeout: (timer: number) => void, getComputedStyle?: (element: any) => {backgroundColor: string, getPropertyValue?: (key: string) => string}, RelayWorkspace: WorkspaceController}} WorkspaceWindow
+ * @typedef {{workspaceDistribution: typeof workspaceDistribution, historyDistribution: typeof historyDistribution, validHistory: typeof validHistory, workspaceAdmin: typeof workspaceAdmin, historyPath: typeof historyPath, createSeriesColors: typeof createSeriesColors, poolPillGroups: typeof poolPillGroups}} WorkspaceHelpers
  * @typedef {{getItem: (key: string) => string|null, setItem: (key: string, value: string) => void}} ColorStorage
  * @typedef {{slot: number, custom?: string}} SeriesColorEntry
  */
@@ -105,6 +107,34 @@ export function validHistory(data) {
 export function workspaceAdmin(caller, key) {
   return !!key && caller?.kind !== 'client' && caller?.kind !== 'member'
     && !caller?.refused?.length;
+}
+
+/** @param {import('./pool-view.js').PoolGroup[]} groups @param {(message: string) => string} [t] @returns {PoolPillGroup[]} */
+export function poolPillGroups(groups, t = message => message) {
+  /** @type {Record<import('./pool-view.js').PoolProvider, {label: string, icon: PoolIcon}>} */
+  const providers = {
+    anthropic: { label: t('Claude'), icon: {
+      svg: { viewBox: '0 0 24 24', xmlns: 'http://www.w3.org/2000/svg' },
+      path: { d: 'M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z', fill: '#D97757', 'fill-rule': 'nonzero' },
+    } },
+    codex: { label: t('ChatGPT/Codex'), icon: {
+      svg: { fill: 'currentColor', 'fill-rule': 'evenodd', viewBox: '0 0 24 24', xmlns: 'http://www.w3.org/2000/svg' },
+      path: { d: 'M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z' },
+    } },
+    grok: { label: t('Grok'), icon: {
+      svg: { fill: 'currentColor', 'fill-rule': 'evenodd', viewBox: '0 0 24 24', xmlns: 'http://www.w3.org/2000/svg' },
+      path: { d: 'M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815' },
+    } },
+    apikey: { label: t('API keys'), icon: 'AK' },
+    backend: { label: t('Other'), icon: 'OT' },
+  };
+  return groups.map(group => {
+    const values = group.totals.map(total => total.remaining).filter(value => value !== null);
+    const remaining = values.length ? Math.min(...values) : null;
+    return { provider: group.provider, label: providers[group.provider].label, icon: providers[group.provider].icon,
+      remaining, tone: remaining === null ? 'none' : remaining <= .1 ? 'bad' : remaining <= .3 ? 'warn' : 'ok',
+      ready: group.accounts.filter(account => account.state === 'ok').length, total: group.accounts.length };
+  });
 }
 
 /** @param {string} scope @param {string} windowKey @param {string} step @param {string} metric */
@@ -490,8 +520,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     state.teamAt = 0; state.historyAt = 0; state.previewAt = 0; state.lastGood = 0; connectionFailure = null;
     state.accountRows = null; state.accountsAt = 0; accountsRequest = null; accountQuotaRequest = null; accountApiAvailable = true;
     state.pool = null; state.poolAt = 0; poolRequest = null; poolApiAvailable = true; poolFailure = null;
-    $('memberPool').textContent = ''; $('adminPool').textContent = '';
-    $('memberPoolSection').hidden = true; $('adminPoolSection').hidden = true;
+    poolControls.forEach(function (control) { control.setOpen(false); control.target.hidden = true; control.pill.textContent = ''; control.content.textContent = ''; });
     state.accountBusy = false; state.removing = null;
     $('myAccountsContent').textContent = ''; $('myAccountsRefresh').disabled = false; $('accountsRefresh').disabled = false; $('accountRemoveConfirm').disabled = false;
     ['accounts', 'summary', 'problems', 'overviewStats', 'providerSummary', 'overviewAttention', 'routes', 'clients', 'dimensionsWrap', 'sessions', 'sessionPinsList', 'foot'].forEach(function (id) { $(id).textContent = ''; });
@@ -680,68 +709,122 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     if (!hours) return t('{minutes}m', { minutes: number(minutes) });
     return minutes % 60 ? t('{hours}h {minutes}m', { hours: number(hours), minutes: number(minutes % 60) }) : t('{hours}h', { hours: number(hours) });
   }
-  /** @param {number|null} remaining @param {number|null} resetAt @param {number|null} seenAt @param {string} label @param {boolean} [total] */
-  function poolBar(remaining, resetAt, seenAt, label, total) {
-    var now = Date.now(), stale = seenAt !== null && now - seenAt > 1800000;
-    var value = remaining === null ? '?' : t('{percent} left', { percent: i18n.number(remaining, { style: 'percent', maximumFractionDigits: 0 }) });
-    var text = total ? label + ' · ' + value : value;
-    var reset = resetAt !== null ? t('resets in {duration}', { duration: poolDuration(resetAt - now) }) : '';
-    if (total && reset) text += ' · ' + reset;
-    var box = node('div', stale ? 'pool-quota stale' : 'pool-quota');
-    box.appendChild(node('span', '', text));
+  /** @param {PoolIcon} icon */
+  function poolIcon(icon) {
+    if (typeof icon === 'string') { var badge = node('span', 'pool-icon pool-monogram', icon); badge.setAttribute('aria-hidden', 'true'); return badge; }
+    var element = svgElement('svg', Object.assign({ class: 'pool-icon', 'aria-hidden': 'true', focusable: 'false' }, icon.svg));
+    element.appendChild(svgElement('path', icon.path)); return element;
+  }
+  /** @param {number|null} remaining */
+  function poolPercent(remaining) { return remaining === null ? t('?') : i18n.number(remaining, { style: 'percent', maximumFractionDigits: 0 }); }
+  /** @param {import('./pool-view.js').PoolTotal} total @param {number} now */
+  function poolBar(total, now) {
+    var remaining = total.remaining, label = poolWindowLabel(total), value = remaining === null ? t('?') : t('{percent} left', { percent: poolPercent(remaining) });
+    var box = node('div', 'pool-window'), line = node('div', 'pool-window-line');
+    line.appendChild(node('span', '', label));
+    line.appendChild(node('span', 'muted', value + (total.nextResetAt === null ? '' : ' · ' + poolDuration(total.nextResetAt - now))));
+    box.appendChild(line);
     var bar = node('div', 'bar'), fill = node('i', remaining !== null && remaining <= .1 ? 'bad' : remaining !== null && remaining <= .3 ? 'warn' : '');
     bar.setAttribute('role', 'meter'); bar.setAttribute('aria-label', label); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
     bar.setAttribute('aria-valuetext', remaining === null ? t('Unknown') : value);
     if (remaining !== null) bar.setAttribute('aria-valuenow', String(Math.round(remaining * 100)));
     fill.style.width = (remaining === null ? 0 : remaining * 100) + '%'; bar.appendChild(fill); box.appendChild(bar);
-    if (!total && reset) box.appendChild(node('small', '', reset));
-    if (seenAt !== null && stale) box.appendChild(node('small', '', t('updated {duration} ago', { duration: poolDuration(now - seenAt) })));
     return box;
   }
-  function renderPool() {
-    $('memberPoolSection').hidden = !memberMode() || !poolApiAvailable;
-    $('adminPoolSection').hidden = !admin() || !poolApiAvailable;
-    var target = memberMode() ? $('memberPool') : $('adminPool'); target.textContent = '';
-    if (!poolApiAvailable || !state.status || (!memberMode() && !admin())) return;
-    if (poolFailure) target.appendChild(node('p', 'notice error', poolFailure()));
-    if (!state.pool) { if (!poolFailure) target.appendChild(node('p', 'muted', t('Loading pool…'))); return; }
-    if (!state.pool.groups.length) { target.appendChild(node('p', 'muted', t('No shared accounts yet. Your private accounts will also appear here.'))); return; }
-    state.pool.groups.forEach(function (group) {
-      var section = node('section', 'pool-group'), heading = node('div', 'pool-heading');
-      var label = group.provider === 'anthropic' ? 'Claude' : group.provider === 'codex' ? 'ChatGPT/Codex' : group.provider === 'grok' ? 'Grok' : group.provider === 'backend' ? t('Other') : t('API keys');
-      heading.appendChild(node('h3', '', label));
-      var totals = node('div', 'pool-totals');
-      group.totals.forEach(function (total) { totals.appendChild(poolBar(total.remaining, total.nextResetAt, null, poolWindowLabel(total), true)); });
-      heading.appendChild(totals); section.appendChild(heading);
-      if (group.provider === 'grok') section.appendChild(node('p', 'muted', t('No usage signal from this provider')));
-      var scroll = node('div', 'table-scroll'), table = node('table', 'pool-accounts');
-      table.appendChild(node('caption', '', t('{provider} pool accounts', { provider: label })));
-      var head = node('thead'), headers = node('tr');
-      [t('Owner'), t('Plan'), t('Sharing')].concat(group.totals.map(poolWindowLabel), [t('State')]).forEach(function (label) { var cell = node('th', '', label); cell.scope = 'col'; headers.appendChild(cell); });
-      head.appendChild(headers); table.appendChild(head);
-      var body = node('tbody');
-      /** @type {Map<string, number>} */
-      var duplicates = new Map();
-      group.accounts.forEach(function (account) {
-        var row = node('tr'), identity = JSON.stringify([account.owner, account.plan]), count = (duplicates.get(identity) || 0) + 1;
-        duplicates.set(identity, count);
-        var owner = node('th', '', (account.sharing === 'team' ? t('team') : account.owner) + (count > 1 ? ' #' + number(count) : '')); owner.scope = 'row';
-        if (account.ownerIsViewer) owner.appendChild(node('small', 'muted', t('yours')));
-        if (!account.usable) owner.appendChild(node('small', 'muted', t('not in your access')));
-        row.appendChild(owner); row.appendChild(node('td', '', account.plan || '—'));
-        row.appendChild(node('td', '', account.sharing === 'private' ? t('Private') : account.sharing === 'pool' ? t('Pool') : t('Team')));
-        group.totals.forEach(function (total) {
-          var cell = node('td'), window = account.windows.find(function (window) { return window.key === total.key; });
-          if (window) cell.appendChild(poolBar(window.remaining, window.resetAt, window.seenAt, poolWindowLabel(window)));
-          else cell.textContent = '—';
-          row.appendChild(cell);
-        });
-        var stateLabel = account.state === 'disabled' ? t('Disabled') : account.state === 'limited' ? t('Limited') : account.state === 'error' ? t('Error') : t('Ready');
-        row.appendChild(node('td', account.state === 'ok' ? 'ok' : account.state === 'disabled' ? 'muted' : account.state === 'error' ? 'badt' : 'warnt', stateLabel));
-        body.appendChild(row);
-      });
-      table.appendChild(body); scroll.appendChild(table); section.appendChild(scroll); target.appendChild(section);
+  /** @param {string} id */
+  function createPoolControl(id) {
+    var target = $(id), popover = node('div', 'pool-popover'), content = node('div');
+    /** @type {number|null} */
+    var closeTimer = null;
+    /** @type {boolean|null} */
+    var pressedOpen = null;
+    var restoringFocus = false;
+    var pill = button('', function () {
+      setOpen(!(pressedOpen === null ? pill.getAttribute('aria-expanded') === 'true' : pressedOpen)); pressedOpen = null;
+    }, 'pool-pill');
+    pill.setAttribute('aria-expanded', 'false'); pill.setAttribute('aria-controls', id + 'Popover'); pill.setAttribute('aria-haspopup', 'dialog');
+    popover.setAttribute('id', id + 'Popover'); popover.setAttribute('role', 'dialog'); popover.setAttribute('aria-hidden', 'true'); popover.tabIndex = -1;
+    popover.appendChild(content); target.appendChild(pill); target.appendChild(popover);
+    function position() {
+      if (pill.getAttribute('aria-expanded') !== 'true' || !pill.getBoundingClientRect) return;
+      var rect = pill.getBoundingClientRect(), viewport = document.documentElement.clientWidth, width = Math.min(320, viewport - 32), height = window.innerHeight || document.documentElement.clientHeight;
+      popover.style.left = Math.max(16, Math.min(rect.right - width, viewport - width - 16)) + 'px';
+      popover.style.top = rect.bottom + 8 + 'px'; popover.style.maxHeight = Math.max(0, height - rect.bottom - 24) + 'px';
+    }
+    /** @param {boolean} open @param {boolean} [restore] */
+    function setOpen(open, restore) {
+      if (closeTimer !== null) window.clearTimeout(closeTimer); closeTimer = null;
+      open = open && !target.hidden;
+      pill.setAttribute('aria-expanded', String(open)); popover.setAttribute('data-open', String(open)); popover.setAttribute('aria-hidden', String(!open));
+      position();
+      if (restore) { restoringFocus = true; pill.focus(); restoringFocus = false; }
+    }
+    target.addEventListener('pointerenter', /** @param {WorkspaceEvent} event */ function (event) { if (event.pointerType !== 'touch') setOpen(true); });
+    target.addEventListener('pointerleave', function () { closeTimer = window.setTimeout(function () { if (!target.contains(document.activeElement)) setOpen(false); }, 150); });
+    pill.addEventListener('pointerdown', function () { pressedOpen = pill.getAttribute('aria-expanded') === 'true'; });
+    pill.addEventListener('pointercancel', function () { pressedOpen = null; });
+    pill.addEventListener('focus', function () { if (!restoringFocus && pressedOpen === null) setOpen(true); });
+    target.addEventListener('focusout', /** @param {WorkspaceEvent} event */ function (event) { if (!target.contains(event.relatedTarget)) setOpen(false); });
+    return { target: target, pill: pill, popover: popover, content: content, setOpen: setOpen, position: position };
+  }
+  var poolControls = ['memberPool', 'adminPool'].map(createPoolControl);
+  document.addEventListener?.('pointerdown', function (event) {
+    poolControls.forEach(function (control) { if (!control.target.contains(event.target)) control.setOpen(false); });
+  });
+  document.addEventListener?.('keydown', function (event) {
+    if (event.key === 'Escape') poolControls.forEach(function (control) {
+      if (control.pill.getAttribute('aria-expanded') === 'true') { event.preventDefault(); control.setOpen(false, true); }
     });
+  });
+  document.addEventListener?.('scroll', function () { poolControls.forEach(function (control) { control.position(); }); }, true);
+  window.addEventListener('resize', function () { poolControls.forEach(function (control) { control.position(); }); });
+  function renderPool() {
+    poolControls.forEach(function (control, index) {
+      control.target.hidden = !state.status || !poolApiAvailable || (index === 0 ? !memberMode() : !admin());
+      if (control.target.hidden) control.setOpen(false);
+    });
+    if (!poolApiAvailable || !state.status || (!memberMode() && !admin())) return;
+    var control = poolControls[memberMode() ? 0 : 1], pill = control.pill, target = control.content;
+    var groups = state.pool ? state.pool.groups : [], summaries = helpers.poolPillGroups(groups, t), now = Date.now();
+    pill.textContent = ''; pill.appendChild(node('span', 'muted', t('Pool'))); target.textContent = '';
+    control.popover.setAttribute('aria-label', t('Pool'));
+    if (poolFailure) {
+      var dot = node('span', 'pool-state warn'); dot.setAttribute('role', 'img'); dot.setAttribute('aria-label', t('Could not refresh pool.')); pill.appendChild(dot);
+      target.appendChild(node('p', 'notice warn', poolFailure()));
+    } else if (!state.pool) pill.appendChild(node('span', 'muted', t('…')));
+    else if (!summaries.length) pill.appendChild(node('span', 'muted', t('empty')));
+    else summaries.forEach(function (group) {
+      var entry = node('span', 'pool-provider ' + group.tone); entry.title = group.label;
+      entry.setAttribute('role', 'img'); entry.setAttribute('aria-label', group.label + ' · ' + (group.remaining === null ? t('Unknown') : poolPercent(group.remaining)));
+      entry.appendChild(poolIcon(group.icon));
+      if (group.remaining !== null) entry.appendChild(node('span', 'pool-percent ' + group.tone, poolPercent(group.remaining)));
+      pill.appendChild(entry);
+    });
+    if (!state.pool && !poolFailure) target.appendChild(node('p', 'muted', t('Loading pool…')));
+    else if (state.pool && !summaries.length) target.appendChild(node('p', 'muted', t('No shared accounts yet. Your private accounts will also appear here.')));
+    summaries.forEach(function (summary, index) {
+      var group = groups[index], section = node('section', 'pool-detail'), heading = node('div', 'pool-provider-heading');
+      heading.appendChild(poolIcon(summary.icon)); heading.appendChild(node('h3', '', summary.label));
+      heading.appendChild(node('small', '', t('{ready} of {total} ready', { ready: number(summary.ready), total: number(summary.total) })));
+      section.appendChild(heading);
+      if (group.provider === 'grok') section.appendChild(node('p', 'muted', t('No usage signal from this provider')));
+      else group.totals.forEach(function (total) { section.appendChild(poolBar(total, now)); });
+      var accounts = node('ul', 'pool-account-list');
+      group.accounts.forEach(function (account) {
+        var row = node('li', 'pool-account'), dot = node('span', 'pool-state ' + (account.state === 'ok' ? 'ok' : account.state === 'limited' ? 'warn' : account.state === 'error' ? 'bad' : 'none'));
+        var stateLabel = account.state === 'disabled' ? t('Disabled') : account.state === 'limited' ? t('Limited') : account.state === 'error' ? t('Error') : t('Ready');
+        dot.setAttribute('role', 'img'); dot.setAttribute('aria-label', stateLabel); dot.title = stateLabel; row.appendChild(dot);
+        var info = node('span', 'pool-account-info', (account.sharing === 'team' ? t('team') : account.owner || t('team')) + ' · ' + (account.plan || t('—')));
+        if (account.ownerIsViewer) info.appendChild(node('small', '', t('yours')));
+        if (!account.usable) info.appendChild(node('small', '', t('not in your access')));
+        var readings = account.windows.map(function (window) { return window.remaining; }).filter(function (value) { return value !== null; });
+        var seen = account.windows.map(function (window) { return window.seenAt; }).filter(function (at) { return at !== null; });
+        if (seen.length && now - Math.min.apply(null, seen) > 1800000) info.appendChild(node('small', '', t('updated {duration} ago', { duration: poolDuration(now - Math.min.apply(null, seen)) })));
+        row.appendChild(info); row.appendChild(node('span', 'pool-percent', poolPercent(readings.length ? Math.min.apply(null, readings) : null))); accounts.appendChild(row);
+      });
+      section.appendChild(accounts); target.appendChild(section);
+    });
+    target.appendChild(node('p', 'pool-footer muted', t('Shared accounts plus your private ones.'))); control.position();
   }
   /** Called by the fleet card renderer; ownership metadata comes from the account API. @param {WorkspaceAccount} account @param {any} target */
   function accountControls(account, target) {
@@ -1242,4 +1325,4 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
 }
 
 export const WORKSPACE_SCRIPT = '(' + bootWorkspace.toString() + ')(document,window,fetch,window.RelayStorage,{' +
-  [workspaceDistribution, historyDistribution, validHistory, workspaceAdmin, historyPath, createSeriesColors].map(fn => fn.name + ':' + fn.toString()).join(',') + '},window.RelayI18n);';
+  [workspaceDistribution, historyDistribution, validHistory, workspaceAdmin, historyPath, createSeriesColors, poolPillGroups].map(fn => fn.name + ':' + fn.toString()).join(',') + '},window.RelayI18n);';

@@ -32,8 +32,7 @@ export const WORKSPACE_HTML = `
       <div id="err" role="alert"></div><div id="note" role="status"></div>
       <div id="caller" style="display:none"><span id="callerText"></span></div>
       <p id="accountMessage" class="notice" role="status" hidden></p>
-      <section data-panel="my-accounts" hidden aria-label="My accounts" data-i18n-aria-label="My accounts"><section class="surface"><div class="section-heading"><h2 data-i18n="Your provider accounts">Your provider accounts</h2><div class="button-row"><button id="myAccountsRefresh" type="button" data-i18n="Refresh">Refresh</button><button id="accountAdd" class="primary" type="button" data-i18n="Add my account">Add my account</button></div></div><div id="myAccountsContent" class="table-scroll"></div></section>
-        <section id="memberPoolSection" class="surface" hidden aria-labelledby="memberPoolTitle"><h2 id="memberPoolTitle" data-i18n="Pool">Pool</h2><p class="muted" data-i18n="Remaining quota on the team's shared accounts, plus any private accounts of your own.">Remaining quota on the team's shared accounts, plus any private accounts of your own.</p><div id="memberPool"></div></section>
+      <section data-panel="my-accounts" hidden aria-label="My accounts" data-i18n-aria-label="My accounts"><section class="surface"><div class="section-heading"><h2 data-i18n="Your provider accounts">Your provider accounts</h2><div class="button-row"><div id="memberPool" class="pool-control" hidden></div><button id="myAccountsRefresh" type="button" data-i18n="Refresh">Refresh</button><button id="accountAdd" class="primary" type="button" data-i18n="Add my account">Add my account</button></div></div><div id="myAccountsContent" class="table-scroll"></div></section>
       </section>
       <section data-panel="overview" aria-label="Overview" data-i18n-aria-label="Overview">
         <div class="overview-wash"><div class="overview-intro"><p class="eyebrow" data-i18n="TEAM OPERATIONS">TEAM OPERATIONS</p><h2><span data-i18n="Control access.">Control access.</span><br><span data-i18n="Track usage.">Track usage.</span></h2><p id="overviewLead" data-i18n="Waiting for the first gateway status.">Waiting for the first gateway status.</p><a class="text-link" href="#accounts" data-i18n="View accounts and availability ↗">View accounts and availability ↗</a></div><div id="overviewStats" class="overview-stats"></div></div>
@@ -41,8 +40,7 @@ export const WORKSPACE_HTML = `
         <section class="surface history-preview"><div class="section-heading"><div><p class="eyebrow" data-i18n="RECORDED ACTIVITY">RECORDED ACTIVITY</p><h2 data-i18n="The last 24 hours">The last 24 hours</h2></div><a href="#usage" data-i18n="Explore usage ↗">Explore usage ↗</a></div><div id="overviewHistory"></div></section>
       </section>
       <section data-panel="accounts" hidden aria-label="Accounts" data-i18n-aria-label="Accounts">
-        <div class="section-heading"><p class="muted" data-i18n="Quotas, credits, and routing for each account. Changes apply to the gateway.">Quotas, credits, and routing for each account. Changes apply to the gateway.</p><div class="button-row"><span id="accountCount" class="count-pill"></span><button id="accountsRefresh" type="button" data-i18n="Refresh">Refresh</button><button id="accountsAdd" class="primary" type="button" data-i18n="Add account" hidden>Add account</button></div></div>
-        <section id="adminPoolSection" class="surface" hidden aria-labelledby="adminPoolTitle"><h2 id="adminPoolTitle" data-i18n="Pool">Pool</h2><p class="muted" data-i18n="Remaining quota on the team's shared accounts, plus any private accounts of your own.">Remaining quota on the team's shared accounts, plus any private accounts of your own.</p><div id="adminPool"></div></section>
+        <div class="section-heading"><p class="muted" data-i18n="Quotas, credits, and routing for each account. Changes apply to the gateway.">Quotas, credits, and routing for each account. Changes apply to the gateway.</p><div class="button-row"><div id="adminPool" class="pool-control" hidden></div><span id="accountCount" class="count-pill"></span><button id="accountsRefresh" type="button" data-i18n="Refresh">Refresh</button><button id="accountsAdd" class="primary" type="button" data-i18n="Add account" hidden>Add account</button></div></div>
         <div id="accounts"></div><div id="accountsEmpty" class="empty" hidden><h2 data-i18n="No accounts configured">No accounts configured</h2><p data-i18n="Add an account with the RelayCrew CLI and reload the configuration.">Add an account with the RelayCrew CLI and reload the configuration.</p><a href="#settings" data-i18n="Open settings ↗">Open settings ↗</a></div></section>
       <section data-panel="team" hidden aria-label="Team" data-i18n-aria-label="Team"><section class="surface"><div class="section-heading"><div><h2 data-i18n="Individual access">Individual access</h2><p class="muted" data-i18n="One key per person. Control accounts and concurrency.">One key per person. Control accounts and concurrency.</p></div><div class="button-row"><button id="teamRefresh" type="button" data-i18n="Refresh">Refresh</button><button id="teamAdd" class="primary" type="button" disabled data-i18n="Add member">Add member</button></div></div><p id="teamMessage" role="status" class="notice" data-i18n="Open this area with an administrator key.">Open this area with an administrator key.</p><div id="teamContent" class="table-scroll"></div></section></section>
       <section data-panel="usage" hidden aria-label="Usage" data-i18n-aria-label="Usage"><section class="surface"><div class="section-heading"><div><p class="eyebrow" data-i18n="ATTRIBUTED USAGE">ATTRIBUTED USAGE</p><h2 data-i18n="Where usage happens">Where usage happens</h2></div><span class="count-pill" data-i18n="No cost estimate">No cost estimate</span></div><div class="usage-controls"><label><span data-i18n="Period">Period</span><select id="historyWindow"><option value="24h" data-i18n="24 hours">24 hours</option><option value="5h" data-i18n="5 hours">5 hours</option><option value="total" data-i18n="Cumulative total">Cumulative total</option></select></label><label><span data-i18n="Group by">Group by</span><select id="historyScope"><option value="clients" data-i18n="Clients">Clients</option></select></label><label><span data-i18n="Metric">Metric</span><select id="historyMetric"><option value="requests" data-i18n="Requests">Requests</option><option value="inputTokens" data-i18n="Input tokens">Input tokens</option><option value="outputTokens" data-i18n="Output tokens">Output tokens</option><option value="connections" data-i18n="WebSocket connections (cumulative)">WebSocket connections (cumulative)</option></select></label><label id="stepLabel"><span data-i18n="Interval">Interval</span><select id="historyStep"><option value="15m" data-i18n="15 minutes">15 minutes</option><option value="1h" data-i18n="1 hour">1 hour</option></select></label><button id="historyRefresh" type="button" data-i18n="Refresh">Refresh</button></div><p id="historyMessage" class="notice" role="status"></p><div id="historyChart"></div><div class="section-heading distribution-heading"><h3 id="distributionTitle" data-i18n="Distribution in period">Distribution in period</h3><button id="clearBucket" type="button" hidden data-i18n="View entire period">View entire period</button></div><div id="historyDistribution"></div><details id="historyDetails"><summary data-i18n="Interval table · same values as the chart">Interval table · same values as the chart</summary><div id="historyTable" class="table-scroll"></div></details><p class="coverage-note" data-i18n="Recorded activity only. An interval without usage does not prove availability. The first and last intervals may be incomplete; abrupt restarts may lose unsaved records. History is limited to the last 24 hours.">Recorded activity only. An interval without usage does not prove availability. The first and last intervals may be incomplete; abrupt restarts may lose unsaved records. History is limited to the last 24 hours.</p></section>
@@ -276,23 +274,47 @@ td{border-bottom-color:color-mix(in srgb,var(--line) 70%,transparent)}
 td:first-child{font-weight:500}
 td .button-row{flex-wrap:nowrap}
 .owned-accounts td:first-child{white-space:normal;overflow-wrap:anywhere;min-width:140px;max-width:260px}
-.pool-group{margin-top:24px}
-.pool-group+.pool-group{padding-top:24px;border-top:1px solid var(--line)}
-.pool-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:12px 24px;margin-bottom:14px}
-.pool-heading h3{margin:0}
-.pool-totals{display:flex;flex-wrap:wrap;gap:12px 20px;flex:1}
-.pool-quota{min-width:140px;font-size:11px;font-variant-numeric:tabular-nums}
-.pool-quota .bar{margin-top:6px}
-.pool-quota small,.pool-accounts td>small{display:block;font-weight:400;white-space:normal}
-.pool-quota.stale .bar{opacity:.5}
-.pool-accounts td:first-child{white-space:normal;overflow-wrap:anywhere;min-width:100px;max-width:220px}
-.pool-accounts th[scope="row"]{font-size:11px;white-space:normal;overflow-wrap:anywhere;min-width:100px;max-width:220px}
-.pool-accounts th[scope="row"] small{display:block;font-weight:400}
-.pool-accounts td,.pool-accounts tbody th{vertical-align:top;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
-.pool-accounts tbody tr:last-child th{border-bottom:none}
-.pool-accounts caption{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .button-row{display:flex;gap:7px;flex-wrap:wrap}
 .button-row button{font-size:10px;padding:6px 8px}
+.section-heading:has(.pool-control){flex-wrap:wrap}
+.section-heading:has(.pool-control)>.button-row{align-items:center;max-width:100%;margin-left:auto}
+.pool-control{display:flex;align-items:center;min-width:0;max-width:100%}
+.button-row .pool-pill{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0;max-width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:99px;background:var(--panel);white-space:nowrap;line-height:16px}
+.pool-pill:hover,.pool-pill[aria-expanded="true"]{border-color:var(--control-line);background:var(--soft)}
+.pool-pill:focus-visible{outline-offset:3px}
+.pool-provider{display:inline-flex;align-items:center;gap:4px}
+.pool-provider.none{opacity:.65}
+.pool-icon{display:block;width:16px;height:16px;flex-shrink:0;color:var(--text)}
+.pool-monogram{display:grid;place-items:center;border:1px solid var(--line);border-radius:4px;font-size:8px;font-weight:600;line-height:1;color:var(--dim)}
+.pool-percent{font-variant-numeric:tabular-nums;white-space:nowrap}
+.pool-percent.ok{color:var(--ok)}
+.pool-percent.warn{color:var(--warn)}
+.pool-percent.bad{color:var(--bad)}
+.pool-percent.none{color:var(--dim)}
+.pool-popover{position:fixed;z-index:30;width:320px;max-width:calc(100vw - 32px);padding:16px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 32px -12px color-mix(in srgb,var(--text) 24%,transparent);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--control-line) var(--panel);font-size:11px;line-height:1.5;opacity:0;transform:translateY(4px);visibility:hidden;pointer-events:none;transition:opacity 90ms ease-out,transform 90ms ease-out,visibility 0s 90ms}
+.pool-popover[data-open="true"]{opacity:1;transform:translateY(0);visibility:visible;pointer-events:auto;transition-duration:140ms,140ms,0s;transition-delay:0s}
+.pool-popover .pool-icon{width:18px;height:18px}
+.pool-detail+.pool-detail{border-top:1px solid var(--line);margin-top:14px;padding-top:14px}
+.pool-provider-heading{display:flex;align-items:center;gap:7px;margin-bottom:10px}
+.pool-provider-heading h3{min-width:0;overflow-wrap:anywhere;margin:0;font-size:12px}
+.pool-provider-heading small{margin-left:auto;text-align:right;font-size:10px}
+.pool-window{margin-top:8px}
+.pool-window-line{display:flex;justify-content:space-between;gap:10px;font-variant-numeric:tabular-nums}
+.pool-window-line>span:first-child{min-width:0;overflow-wrap:anywhere}
+.pool-window-line>span:last-child{text-align:right}
+.pool-window .bar{height:3px;margin-top:4px}
+.pool-account-list{display:grid;gap:7px;list-style:none;padding:0;margin:12px 0 0}
+.pool-account{display:flex;align-items:baseline;gap:6px}
+.pool-state{display:inline-block;flex-shrink:0;width:6px;height:6px;border-radius:50%;background:var(--dim)}
+.pool-state.ok{background:var(--ok)}
+.pool-state.warn{background:var(--warn)}
+.pool-state.bad{background:var(--bad)}
+.pool-account-info{min-width:0;flex:1;overflow-wrap:anywhere}
+.pool-account-info small{font-size:10px;margin-left:5px}
+.pool-account>.pool-percent{margin-left:auto}
+.pool-footer{border-top:1px solid var(--line);margin-top:14px;padding-top:10px;font-size:10px}
+.pool-popover .notice{margin:0 0 12px;font-size:11px;overflow-wrap:anywhere}
+@media(prefers-reduced-motion:reduce){.pool-popover{transition:none;transform:none}}
 details>summary{font-size:12px;font-weight:550;cursor:pointer;color:var(--dim);padding:4px 0}
 details[open]>summary{margin-bottom:16px}
 .legacy-usage .card{overflow:auto}

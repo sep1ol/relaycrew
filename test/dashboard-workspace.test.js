@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WORKSPACE_SCRIPT, workspaceDistribution, historyDistribution, validHistory, workspaceAdmin, historyPath, createSeriesColors } from '../src/dashboard-workspace.js';
+import { WORKSPACE_SCRIPT, workspaceDistribution, historyDistribution, validHistory, workspaceAdmin, historyPath, createSeriesColors, poolPillGroups } from '../src/dashboard-workspace.js';
 import { I18N_SCRIPT } from '../src/dashboard-translations.js';
 import { makeDashboardDom } from './helpers/dashboard-dom.js';
 import { WORKSPACE_HTML } from '../src/dashboard-shell.js';
@@ -116,28 +116,115 @@ test('member sign-in falls back from status 403 to me and exposes only My accoun
   assert.equal(page.$('summary').hidden, true); assert.equal(page.$('teamContent').textContent, ''); assert.equal(page.requests.length, 0);
 });
 
-test('member boot renders the pool below My accounts with owner, plan, sharing and remaining bars', async () => {
+test('pool pill summaries use the binding window and count only ready accounts', () => {
+  const groups = ['anthropic', 'codex', 'apikey', 'grok', 'backend'].map((provider, i) => ({ provider,
+    accounts: [{ state: 'ok' }, { state: 'limited' }, { state: 'disabled' }, { state: 'error' }],
+    totals: [0.3, 0.1, 0.8, null, null][i] === null ? [] : [{ remaining: 0.9 }, { remaining: null }, { remaining: [0.3, 0.1, 0.8][i] }],
+  }));
+  groups[4].totals = [{ remaining: null }];
+  const summaries = poolPillGroups(groups);
+  assert.deepEqual(summaries.map(({ provider, label, remaining, tone, ready, total }) => ({ provider, label, remaining, tone, ready, total })), [
+    { provider: 'anthropic', label: 'Claude', remaining: 0.3, tone: 'warn', ready: 1, total: 4 },
+    { provider: 'codex', label: 'ChatGPT/Codex', remaining: 0.1, tone: 'bad', ready: 1, total: 4 },
+    { provider: 'apikey', label: 'API keys', remaining: 0.8, tone: 'ok', ready: 1, total: 4 },
+    { provider: 'grok', label: 'Grok', remaining: null, tone: 'none', ready: 1, total: 4 },
+    { provider: 'backend', label: 'Other', remaining: null, tone: 'none', ready: 1, total: 4 },
+  ]);
+  assert.equal(summaries[0].icon.path.fill, '#D97757');
+  assert.equal(summaries[1].icon.svg.fill, 'currentColor');
+  assert.equal(summaries[2].icon, 'AK'); assert.equal(summaries[4].icon, 'OT');
+});
+
+test('member boot renders pool provider minima and compact totals and account lines', async () => {
   const page = memberPage(); await page.answer(200, { accounts: [ownAccount()] });
   assert.equal(page.requests[0].url, '/relaycrew/accounts/pool');
   assert.equal(page.requests[0].init.headers['x-api-key'], 'member-key');
-  assert.match(page.$('memberPool').textContent, /Loading pool/);
+  const pill = page.$('memberPool').querySelector('button');
+  assert.equal(pill.textContent, 'Pool…');
   const resetAt = Date.now() + 80 * 60000, stale = Date.now() - 2 * 3600_000;
   await page.answer(200, { generatedAt: Date.now(), groups: [
-    { provider: 'anthropic', label: 'Claude', totals: [{ key: 'fiveHour', label: '5h', remaining: 0.7, accounts: 2, nextResetAt: resetAt }, { key: 'weekly:opus', label: 'Opus', remaining: 0.15, accounts: 1, nextResetAt: null }], accounts: [
-      { key: '0', owner: 'other', ownerIsViewer: false, plan: 'Max 20x', sharing: 'pool', usable: false, state: 'ok', windows: [{ key: 'fiveHour', label: '5h', remaining: 0.9, resetAt, seenAt: stale }, { key: 'weekly:opus', label: 'Opus', remaining: 0.15, resetAt: null, seenAt: null }] },
+    { provider: 'anthropic', label: 'Claude', totals: [{ key: 'fiveHour', label: '5h', remaining: 0.7, accounts: 2, nextResetAt: resetAt }, { key: 'weekly:fable', label: 'Fable', remaining: 0.15, accounts: 1, nextResetAt: null }], accounts: [
+      { key: '0', owner: 'other', ownerIsViewer: false, plan: 'Max 20x', sharing: 'pool', usable: false, state: 'ok', windows: [{ key: 'fiveHour', label: '5h', remaining: 0.9, resetAt, seenAt: stale }, { key: 'weekly:fable', label: 'Fable', remaining: 0.15, resetAt: null, seenAt: null }] },
       { key: '1', owner: 'marina', ownerIsViewer: true, plan: null, sharing: 'private', usable: true, state: 'limited', windows: [{ key: 'fiveHour', label: '5h', remaining: null, resetAt: null, seenAt: null }] },
     ] },
+    { provider: 'codex', label: 'Codex', totals: [{ key: 'fiveHour', label: '5h', remaining: 0.9, accounts: 1, nextResetAt: null }, { key: 'weekly', label: 'Week', remaining: 0.1, accounts: 1, nextResetAt: null }], accounts: [] },
+    { provider: 'apikey', label: 'API keys', totals: [{ key: 'tokens', label: 'Tokens', remaining: 0.8, accounts: 1, nextResetAt: null }], accounts: [] },
     { provider: 'grok', label: 'Grok', totals: [], accounts: [{ key: '2', owner: 'team', ownerIsViewer: false, plan: null, sharing: 'team', usable: true, state: 'ok', windows: [] }] },
   ] });
-  assert.equal(page.$('memberPoolSection').hidden, false); assert.equal(page.$('adminPoolSection').hidden, true);
-  const text = page.$('memberPool').textContent;
-  assert.match(text, /Claude5h · 70% left · resets in 1h 20mWeek · Opus · 15% left/);
-  assert.match(text, /other.*not in your access.*Max 20x.*Pool.*90% left.*resets in 1h 20m.*updated 2h ago.*15% left.*Ready/);
-  assert.match(text, /marina.*yours.*—.*Private.*\?.*—.*Limited/);
-  assert.match(text, /GrokNo usage signal from this provider.*team/);
-  assert.deepEqual(page.$('memberPool').querySelectorAll('[role="meter"]').map(meter => meter.getAttribute('aria-valuenow')), ['70', '15', '90', '15', null]);
-  assert.deepEqual(page.$('memberPool').querySelectorAll('i').map(fill => fill.className || ''), ['', 'warn', '', 'warn', '']);
+  assert.equal(page.$('memberPool').hidden, false); assert.equal(page.$('adminPool').hidden, true);
+  assert.equal(page.$('memberPool').parentNode.children[0], page.$('memberPool'));
+  assert.equal(page.$('memberPool').querySelector('button'), pill);
+  assert.deepEqual(pill.querySelectorAll('.pool-percent').map(value => [value.textContent, value.className]), [['15%', 'pool-percent warn'], ['10%', 'pool-percent bad'], ['80%', 'pool-percent ok']]);
+  assert.equal(pill.querySelectorAll('.pool-provider').at(-1).className, 'pool-provider none');
+  assert.equal(pill.querySelectorAll('svg').length, 3);
+  for (const icon of pill.querySelectorAll('svg')) {
+    assert.equal(icon.getAttribute('aria-hidden'), 'true'); assert.equal(icon.getAttribute('focusable'), 'false');
+    assert.equal(icon.getAttribute('width'), null); assert.equal(icon.querySelectorAll('title').length, 0);
+  }
+  const popover = page.$('memberPoolPopover'), text = popover.textContent;
+  assert.match(text, /Claude1 of 2 ready5h70% left · 1h 20mWeek · Fable15% left/);
+  assert.match(text, /other · Max 20xnot in your accessupdated 2h ago15%/);
+  assert.match(text, /marina · —yours\?/);
+  assert.match(text, /Grok1 of 1 readyNo usage signal from this provider.*team · —\?/);
+  assert.match(text, /Shared accounts plus your private ones\./);
+  assert.deepEqual(popover.querySelectorAll('[role="meter"]').map(meter => meter.getAttribute('aria-valuenow')), ['70', '15', '90', '10', '80']);
+  assert.deepEqual(popover.querySelectorAll('.pool-state').map(dot => dot.getAttribute('aria-label')), ['Ready', 'Limited', 'Ready']);
+  assert.equal(popover.querySelectorAll('table').length, 0);
   assert.equal(page.requests.length, 0);
+});
+
+test('admin accounts header shows its pool pill and hides the member pill', async () => {
+  const page = boot({ locale: null, hash: '#accounts' });
+  await page.answer(200, { accounts: [] }); await page.answer(200, emptyPool);
+  assert.equal(page.$('adminPool').hidden, false); assert.equal(page.$('memberPool').hidden, true);
+  assert.equal(page.$('adminPool').parentNode.children[0], page.$('adminPool'));
+  assert.equal(page.$('adminPool').parentNode.children[1], page.$('accountCount'));
+  assert.equal(page.$('adminPool').querySelector('button').textContent, 'Poolempty');
+});
+
+test('a pool 404 hides both pills and stops pool reads', async () => {
+  const page = memberPage(); await page.answer(200, { accounts: [] }); await page.answer(404, {});
+  assert.equal(page.$('memberPool').hidden, true); assert.equal(page.$('adminPool').hidden, true);
+  page.window.RelayWorkspace.update(page.status);
+  assert.equal(page.requests.length, 0);
+});
+
+test('pool popover supports hover, focus, Escape, tap and outside presses', async () => {
+  const page = memberPage(); await page.answer(200, { accounts: [] }); await page.answer(200, emptyPool);
+  const target = page.$('memberPool'), pill = target.querySelector('button'), popover = page.$('memberPoolPopover');
+  assert.equal(pill.getAttribute('aria-controls'), popover.id);
+  assert.equal(popover.getAttribute('role'), 'dialog'); assert.equal(popover.getAttribute('aria-label'), 'Pool');
+  await target.fire('pointerenter', { pointerType: 'mouse' }); assert.equal(pill.getAttribute('aria-expanded'), 'true');
+  await target.fire('pointerleave'); assert.equal([...page.timers.values()][0].delay, 150);
+  await target.fire('pointerenter'); assert.equal(page.timers.size, 0);
+  await target.fire('pointerleave'); await page.tick(); assert.equal(pill.getAttribute('aria-expanded'), 'false');
+  await target.fire('pointerenter'); await page.document.documentElement.fire('keydown', { key: 'Escape' });
+  assert.equal(pill.getAttribute('aria-expanded'), 'false');
+  pill.focus(); await pill.fire('focus'); assert.equal(pill.getAttribute('aria-expanded'), 'true');
+  await page.document.documentElement.fire('keydown', { key: 'Escape' });
+  assert.equal(pill.getAttribute('aria-expanded'), 'false'); assert.equal(popover.getAttribute('aria-hidden'), 'true');
+  assert.equal(page.document.activeElement, pill);
+  await target.fire('pointerenter', { pointerType: 'touch' }); assert.equal(pill.getAttribute('aria-expanded'), 'false');
+  await pill.fire('pointerdown', { pointerType: 'touch' }); await pill.fire('focus'); await pill.fire('click');
+  assert.equal(pill.getAttribute('aria-expanded'), 'true');
+  await pill.fire('click'); assert.equal(pill.getAttribute('aria-expanded'), 'false');
+  await pill.fire('click'); await page.document.documentElement.fire('pointerdown', { target: page.$('myAccountsRefresh') });
+  assert.equal(pill.getAttribute('aria-expanded'), 'false');
+});
+
+test('pool polling preserves an open popover and focus while surfacing failures', async () => {
+  const page = memberPage(); await page.answer(200, { accounts: [] }); await page.answer(200, emptyPool);
+  const target = page.$('memberPool'), pill = target.querySelector('button'), popover = page.$('memberPoolPopover');
+  pill.focus(); await pill.fire('focus');
+  const now = Date.now;
+  try { Date.now = () => now() + 16000; page.window.RelayWorkspace.update(page.status); }
+  finally { Date.now = now; }
+  await page.answer(200, { accounts: [] });
+  assert.equal(page.requests[0].url, '/relaycrew/accounts/pool'); await page.answer(500, { error: 'temporarily offline' });
+  assert.equal(target.querySelector('button'), pill); assert.equal(page.$('memberPoolPopover'), popover);
+  assert.equal(page.document.activeElement, pill); assert.equal(pill.getAttribute('aria-expanded'), 'true');
+  assert.equal(pill.querySelector('.pool-state').className, 'pool-state warn');
+  assert.match(popover.textContent, /Could not refresh pool\. temporarily offline Retrying automatically\./);
 });
 
 test('member authentication retains transient failures and discards late me responses after a key change', async () => {
