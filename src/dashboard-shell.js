@@ -290,7 +290,6 @@ td .button-row{flex-wrap:nowrap}
 .pool-percent.ok{color:var(--ok)}
 .pool-percent.warn{color:var(--warn)}
 .pool-percent.bad{color:var(--bad)}
-.pool-percent.none{color:var(--dim)}
 .pool-popover{position:fixed;z-index:30;width:320px;max-width:calc(100vw - 32px);padding:16px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 32px -12px color-mix(in srgb,var(--text) 24%,transparent);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--control-line) var(--panel);font-size:11px;line-height:1.5;opacity:0;transform:translateY(4px);visibility:hidden;pointer-events:none;transition:opacity 90ms ease-out,transform 90ms ease-out,visibility 0s 90ms}
 .pool-popover[data-open="true"]{opacity:1;transform:translateY(0);visibility:visible;pointer-events:auto;transition-duration:140ms,140ms,0s;transition-delay:0s}
 .pool-popover .pool-icon{width:18px;height:18px}

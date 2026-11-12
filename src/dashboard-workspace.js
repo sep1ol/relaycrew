@@ -738,9 +738,13 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     var closeTimer = null;
     /** @type {boolean|null} */
     var pressedOpen = null;
+    /** @type {string|null} */
+    var pressedWith = null;
     var restoringFocus = false;
     var pill = button('', function () {
-      setOpen(!(pressedOpen === null ? pill.getAttribute('aria-expanded') === 'true' : pressedOpen)); pressedOpen = null;
+      if (pressedWith && pressedWith !== 'touch') setOpen(true);
+      else setOpen(!(pressedOpen === null ? pill.getAttribute('aria-expanded') === 'true' : pressedOpen));
+      pressedOpen = null; pressedWith = null;
     }, 'pool-pill');
     pill.setAttribute('aria-expanded', 'false'); pill.setAttribute('aria-controls', id + 'Popover'); pill.setAttribute('aria-haspopup', 'dialog');
     popover.setAttribute('id', id + 'Popover'); popover.setAttribute('role', 'dialog'); popover.setAttribute('aria-hidden', 'true'); popover.tabIndex = -1;
@@ -760,9 +764,9 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
       if (restore) { restoringFocus = true; pill.focus(); restoringFocus = false; }
     }
     target.addEventListener('pointerenter', /** @param {WorkspaceEvent} event */ function (event) { if (event.pointerType !== 'touch') setOpen(true); });
-    target.addEventListener('pointerleave', function () { closeTimer = window.setTimeout(function () { if (!target.contains(document.activeElement)) setOpen(false); }, 150); });
-    pill.addEventListener('pointerdown', function () { pressedOpen = pill.getAttribute('aria-expanded') === 'true'; });
-    pill.addEventListener('pointercancel', function () { pressedOpen = null; });
+    target.addEventListener('pointerleave', /** @param {WorkspaceEvent} event */ function (event) { if (event.pointerType === 'touch') return; closeTimer = window.setTimeout(function () { if (!target.contains(document.activeElement)) setOpen(false); }, 150); });
+    pill.addEventListener('pointerdown', /** @param {WorkspaceEvent} event */ function (event) { pressedOpen = pill.getAttribute('aria-expanded') === 'true'; pressedWith = event.pointerType || null; });
+    pill.addEventListener('pointercancel', function () { pressedOpen = null; pressedWith = null; });
     pill.addEventListener('focus', function () { if (!restoringFocus && pressedOpen === null) setOpen(true); });
     target.addEventListener('focusout', /** @param {WorkspaceEvent} event */ function (event) { if (!target.contains(event.relatedTarget)) setOpen(false); });
     return { target: target, pill: pill, popover: popover, content: content, setOpen: setOpen, position: position };
@@ -773,7 +777,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
   });
   document.addEventListener?.('keydown', function (event) {
     if (event.key === 'Escape') poolControls.forEach(function (control) {
-      if (control.pill.getAttribute('aria-expanded') === 'true') { event.preventDefault(); control.setOpen(false, true); }
+      if (control.pill.getAttribute('aria-expanded') === 'true') { event.preventDefault(); control.setOpen(false, control.target.contains(document.activeElement)); }
     });
   });
   document.addEventListener?.('scroll', function () { poolControls.forEach(function (control) { control.position(); }); }, true);
