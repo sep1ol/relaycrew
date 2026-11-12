@@ -58,6 +58,8 @@ export class Prober {
     this.timer = null;
     /** @type {Promise<void>|null} */
     this._activeProbe = null;
+    /** @type {Promise<void>|null} */
+    this._queuedProbe = null;
     this.lastRunStartedAt = null;
     this.lastRunFinishedAt = null;
     this.nextRunAt = this.intervalMs > 0 ? Date.now() + this.intervalMs : null;
@@ -108,6 +110,18 @@ export class Prober {
       this._activeProbe = null;
     });
     return this._activeProbe;
+  }
+
+  probeFresh() {
+    if (this._queuedProbe) return this._queuedProbe;
+    if (!this._activeProbe) return this.probeAll();
+    const startFresh = () => {
+      // Clear before starting so clicks during the follow-up queue a later cycle.
+      this._queuedProbe = null;
+      return this.probeAll();
+    };
+    this._queuedProbe = this._activeProbe.then(startFresh, startFresh);
+    return this._queuedProbe;
   }
 
   /**

@@ -588,7 +588,7 @@ test('prober clamps its interval so the timer cannot overflow', () => {
   assert.equal(new Prober(am, { intervalMs: NaN, log: () => {} }).intervalMs, 0, 'a non-number is off');
 });
 
-test('concurrent manual and timer probes await the same active upstream cycle', async () => {
+test('concurrent timer probes await the same active upstream cycle', async () => {
   const am = new AccountManager([oauth('a'), oauth('b')], 0.98);
   const pending = [];
   const prober = new Prober(am, { probeFn: () => new Promise(resolve => pending.push(resolve)), log: () => {} });
@@ -634,8 +634,9 @@ test('manual quota refresh reads after the click and coalesces one follow-up cyc
   t.mock.timers.tick(1);
   clicked = true;
   const clickedAt = Date.now();
-  const manual = prober.probeAll();
-  const secondManual = prober.probeAll();
+  const manual = prober.probeFresh();
+  const secondManual = prober.probeFresh();
+  assert.equal(secondManual, manual);
   for (const resolve of pending) resolve(usage(98));
   await Promise.all([background, manual, secondManual]);
 
@@ -652,6 +653,76 @@ test('manual quota refresh reads after the click and coalesces one follow-up cyc
   assert.ok(Date.parse(status.lastRunStartedAt) >= clickedAt);
   assert.ok(status.accounts.every(row => Date.parse(row.startedAt) >= clickedAt));
   assert.equal(status.running, false);
+});
+
+test('an idle manual refresh starts one cycle immediately', async () => {
+  const am = new AccountManager([oauth('a')], 0.98);
+  let readings = 0;
+  const prober = new Prober(am, { probeFn: async () => {
+    readings++;
+    return { sevenDay: { utilization: 0.2 } };
+  }, log: () => {} });
+  const manual = prober.probeFresh();
+  assert.equal(prober.getStatus().running, true);
+  assert.equal(prober.probeAll(), manual);
+  await manual;
+  assert.equal(readings, 1);
+  assert.equal(am.accounts[0].quota.unified7d, 0.2);
+});
+
+test('a click during the follow-up waits for another cycle and coalesces later clicks', async () => {
+  const am = new AccountManager([oauth('a')], 0.98);
+  const pending = [];
+  const prober = new Prober(am, { probeFn: () => new Promise(resolve => pending.push(resolve)), log: () => {} });
+  const background = prober.probeAll();
+  await new Promise(resolve => setImmediate(resolve));
+  let completed = false;
+  const manual = prober.probeFresh();
+  manual.then(() => { completed = true; });
+  pending[0]({ sevenDayFable: { utilization: 0.98 } });
+  await background;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pending.length, 2);
+  assert.equal(completed, false, 'manual refresh must wait for the follow-up readings');
+
+  let laterCompleted = false;
+  const laterManual = prober.probeFresh();
+  laterManual.then(() => { laterCompleted = true; });
+  const secondLaterManual = prober.probeFresh();
+  assert.equal(secondLaterManual, laterManual);
+  assert.notEqual(laterManual, manual);
+  const timer = prober.probeAll();
+  pending[1]({ sevenDayFable: { utilization: 0.5 } });
+  await Promise.all([manual, timer]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pending.length, 3);
+  assert.equal(laterCompleted, false, 'later clicks cannot reuse an already-started follow-up');
+  pending[2]({ sevenDayFable: { utilization: 0 } });
+  await Promise.all([laterManual, secondLaterManual]);
+  assert.equal(pending.length, 3);
+  assert.equal(am.accounts[0].quota.unified7dFable, 0);
+  assert.equal(prober.getStatus().running, false);
+});
+
+test('manual follow-up runs even when the active cycle rejects', async () => {
+  const am = new AccountManager([oauth('a')], 0.98);
+  const prober = new Prober(am, { probeFn: async () => ({ sevenDay: { utilization: 0.2 } }), log: () => {} });
+  const probeAccount = prober.probeAccount.bind(prober);
+  let attempts = 0;
+  prober.probeAccount = async account => {
+    if (++attempts === 1) throw new Error('unexpected cycle failure');
+    await probeAccount(account);
+  };
+  const background = prober.probeAll();
+  const manual = prober.probeFresh();
+  const secondManual = prober.probeFresh();
+  assert.equal(secondManual, manual);
+  await Promise.all([assert.rejects(background, /unexpected cycle failure/), manual, secondManual]);
+  assert.equal(attempts, 2);
+  assert.equal(am.accounts[0].quota.unified7d, 0.2);
+  assert.equal(prober.getStatus().running, false);
+  await prober.probeFresh();
+  assert.equal(attempts, 3, 'a later refresh starts another cycle after the queued cycle finishes');
 });
 
 test('background minute cycles read every eligible account without a dashboard', async t => {

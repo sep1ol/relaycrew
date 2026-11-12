@@ -35,7 +35,7 @@ relaycrew probe        # show current setting
 
 An existing configuration with `"quotaProbeSeconds": 0` stays off. Run `relaycrew probe 60` to enable minute-by-minute checks on that installation.
 
-The **Quota probe** row on the TUI settings screen (`g`) changes the same setting. Press `p` on the main screen or click **Refresh** in the dashboard's administrator **Accounts** view to query all supported quota windows again. Manual refresh waits for an active probe cycle instead of starting duplicate requests. A failed account keeps its last known readings.
+The **Quota probe** row on the TUI settings screen (`g`) changes the same setting. Press `p` on the main screen or click **Refresh** in the dashboard's administrator **Accounts** view to query all supported quota windows again. Manual refresh waits for a cycle that starts after the request; if a probe is already running, concurrent refreshes share one follow-up cycle. A failed account keeps its last known readings.
 
 It reads each OAuth account's utilization from its provider's read-only usage endpoint, which reports quota **without consuming any message quota**. Anthropic accounts use `/api/oauth/usage`; Codex accounts use ChatGPT's internal `/backend-api/wham/usage` endpoint and require their `ChatGPT-Account-Id`. Supported third-party backends use their own quota endpoints. Disabled accounts, accounts with rejected refresh tokens, and accounts without a supported endpoint are skipped. The Codex endpoint is not part of the public OpenAI API and may change without notice. Minimum interval is 30s. Changing it takes effect on a running server immediately.
 
