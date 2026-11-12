@@ -60,7 +60,7 @@
  * @property {number} loginEpoch
  *
  * @typedef {string|{svg: Record<string, string>, path: Record<string, string>}} PoolIcon
- * @typedef {{provider: import('./pool-view.js').PoolProvider, label: string, icon: PoolIcon, remaining: number|null, tone: 'ok'|'warn'|'bad'|'none', ready: number, total: number}} PoolPillGroup
+ * @typedef {{provider: import('./pool-view.js').PoolProvider, label: string, icon: PoolIcon, used: number|null, tone: 'ok'|'warn'|'bad'|'none', ready: number, total: number}} PoolPillGroup
  * @typedef {{getElementById: (id: string) => any, querySelectorAll: (selector: string) => any[], createElement: (tag: string) => any, createElementNS: (namespace: string, tag: string) => any, title: string, documentElement?: any, activeElement?: any, hidden?: boolean, addEventListener?: (name: string, listener: (event: WorkspaceEvent) => void, capture?: boolean) => void}} WorkspaceDocument
  * @typedef {{preventDefault: () => void, key?: string, currentTarget: any, target?: any, relatedTarget?: any, pointerType?: string}} WorkspaceEvent
  * @typedef {{update: (status: WorkspaceStatus) => void, failed: (text: string) => void, signedOut: () => void, accountControls: (account: WorkspaceAccount, target: any) => boolean, renderAccounts?: () => void, refresh?: () => Promise<WorkspaceStatus|null>}} WorkspaceController
@@ -130,9 +130,9 @@ export function poolPillGroups(groups, t = message => message) {
   };
   return groups.map(group => {
     const values = group.totals.map(total => total.remaining).filter(value => value !== null);
-    const remaining = values.length ? Math.min(...values) : null;
+    const used = values.length ? 1 - Math.min(...values) : null;
     return { provider: group.provider, label: providers[group.provider].label, icon: providers[group.provider].icon,
-      remaining, tone: remaining === null ? 'none' : remaining <= .1 ? 'bad' : remaining <= .3 ? 'warn' : 'ok',
+      used, tone: used === null ? 'none' : used >= .9 ? 'bad' : used >= .7 ? 'warn' : 'ok',
       ready: group.accounts.filter(account => account.state === 'ok').length, total: group.accounts.length };
   });
 }
@@ -715,20 +715,20 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     var element = svgElement('svg', Object.assign({ class: 'pool-icon', 'aria-hidden': 'true', focusable: 'false' }, icon.svg));
     element.appendChild(svgElement('path', icon.path)); return element;
   }
-  /** @param {number|null} remaining */
-  function poolPercent(remaining) { return remaining === null ? t('?') : i18n.number(remaining, { style: 'percent', maximumFractionDigits: 0 }); }
+  /** @param {number|null} used */
+  function poolPercent(used) { return used === null ? t('?') : i18n.number(used, { style: 'percent', maximumFractionDigits: 0 }); }
   /** @param {import('./pool-view.js').PoolTotal} total @param {number} now */
   function poolBar(total, now) {
-    var remaining = total.remaining, label = poolWindowLabel(total), value = remaining === null ? t('?') : t('{percent} left', { percent: poolPercent(remaining) });
+    var used = total.remaining === null ? null : 1 - total.remaining, label = poolWindowLabel(total), value = used === null ? t('?') : t('{percent} used', { percent: poolPercent(used) });
     var box = node('div', 'pool-window'), line = node('div', 'pool-window-line');
     line.appendChild(node('span', '', label));
     line.appendChild(node('span', 'muted', value + (total.nextResetAt === null ? '' : ' · ' + poolDuration(total.nextResetAt - now))));
     box.appendChild(line);
-    var bar = node('div', 'bar'), fill = node('i', remaining !== null && remaining <= .1 ? 'bad' : remaining !== null && remaining <= .3 ? 'warn' : '');
+    var bar = node('div', 'bar'), fill = node('i', used !== null && used >= .9 ? 'bad' : used !== null && used >= .7 ? 'warn' : '');
     bar.setAttribute('role', 'meter'); bar.setAttribute('aria-label', label); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
-    bar.setAttribute('aria-valuetext', remaining === null ? t('Unknown') : value);
-    if (remaining !== null) bar.setAttribute('aria-valuenow', String(Math.round(remaining * 100)));
-    fill.style.width = (remaining === null ? 0 : remaining * 100) + '%'; bar.appendChild(fill); box.appendChild(bar);
+    bar.setAttribute('aria-valuetext', used === null ? t('Unknown') : value);
+    if (used !== null) bar.setAttribute('aria-valuenow', String(Math.round(used * 100)));
+    fill.style.width = (used === null ? 0 : used * 100) + '%'; bar.appendChild(fill); box.appendChild(bar);
     return box;
   }
   /** @param {string} id */
@@ -799,9 +799,9 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
     else if (!summaries.length) pill.appendChild(node('span', 'muted', t('empty')));
     else summaries.forEach(function (group) {
       var entry = node('span', 'pool-provider ' + group.tone); entry.title = group.label;
-      entry.setAttribute('role', 'img'); entry.setAttribute('aria-label', group.label + ' · ' + (group.remaining === null ? t('Unknown') : poolPercent(group.remaining)));
+      entry.setAttribute('role', 'img'); entry.setAttribute('aria-label', group.label + ' · ' + (group.used === null ? t('Unknown') : t('{percent} used', { percent: poolPercent(group.used) })));
       entry.appendChild(poolIcon(group.icon));
-      if (group.remaining !== null) entry.appendChild(node('span', 'pool-percent ' + group.tone, poolPercent(group.remaining)));
+      if (group.used !== null) entry.appendChild(node('span', 'pool-percent ' + group.tone, poolPercent(group.used)));
       pill.appendChild(entry);
     });
     if (!state.pool && !poolFailure) target.appendChild(node('p', 'muted', t('Loading pool…')));
@@ -824,7 +824,7 @@ function bootWorkspace(document, window, fetch, localStorage, helpers, i18n) {
         var readings = account.windows.map(function (window) { return window.remaining; }).filter(function (value) { return value !== null; });
         var seen = account.windows.map(function (window) { return window.seenAt; }).filter(function (at) { return at !== null; });
         if (seen.length && now - Math.min.apply(null, seen) > 1800000) info.appendChild(node('small', '', t('updated {duration} ago', { duration: poolDuration(now - Math.min.apply(null, seen)) })));
-        row.appendChild(info); row.appendChild(node('span', 'pool-percent', poolPercent(readings.length ? Math.min.apply(null, readings) : null))); accounts.appendChild(row);
+        row.appendChild(info); row.appendChild(node('span', 'pool-percent', poolPercent(readings.length ? 1 - Math.min.apply(null, readings) : null))); accounts.appendChild(row);
       });
       section.appendChild(accounts); target.appendChild(section);
     });
