@@ -123,19 +123,19 @@ test('pool pill summaries use the binding window and count only ready accounts',
   }));
   groups[4].totals = [{ remaining: null }];
   const summaries = poolPillGroups(groups);
-  assert.deepEqual(summaries.map(({ provider, label, remaining, tone, ready, total }) => ({ provider, label, remaining, tone, ready, total })), [
-    { provider: 'anthropic', label: 'Claude', remaining: 0.3, tone: 'warn', ready: 1, total: 4 },
-    { provider: 'codex', label: 'ChatGPT/Codex', remaining: 0.1, tone: 'bad', ready: 1, total: 4 },
-    { provider: 'apikey', label: 'API keys', remaining: 0.8, tone: 'ok', ready: 1, total: 4 },
-    { provider: 'grok', label: 'Grok', remaining: null, tone: 'none', ready: 1, total: 4 },
-    { provider: 'backend', label: 'Other', remaining: null, tone: 'none', ready: 1, total: 4 },
+  assert.deepEqual(summaries.map(({ provider, label, used, tone, ready, total }) => ({ provider, label, percent: used === null ? null : Math.round(used * 100), tone, ready, total })), [
+    { provider: 'anthropic', label: 'Claude', percent: 70, tone: 'warn', ready: 1, total: 4 },
+    { provider: 'codex', label: 'ChatGPT/Codex', percent: 90, tone: 'bad', ready: 1, total: 4 },
+    { provider: 'apikey', label: 'API keys', percent: 20, tone: 'ok', ready: 1, total: 4 },
+    { provider: 'grok', label: 'Grok', percent: null, tone: 'none', ready: 1, total: 4 },
+    { provider: 'backend', label: 'Other', percent: null, tone: 'none', ready: 1, total: 4 },
   ]);
   assert.equal(summaries[0].icon.path.fill, '#D97757');
   assert.equal(summaries[1].icon.svg.fill, 'currentColor');
   assert.equal(summaries[2].icon, 'AK'); assert.equal(summaries[4].icon, 'OT');
 });
 
-test('member boot renders pool provider minima and compact totals and account lines', async () => {
+test('member boot renders maximum pool usage and compact totals and account lines', async () => {
   const page = memberPage(); await page.answer(200, { accounts: [ownAccount()] });
   assert.equal(page.requests[0].url, '/relaycrew/accounts/pool');
   assert.equal(page.requests[0].init.headers['x-api-key'], 'member-key');
@@ -154,7 +154,8 @@ test('member boot renders pool provider minima and compact totals and account li
   assert.equal(page.$('memberPool').hidden, false); assert.equal(page.$('adminPool').hidden, true);
   assert.equal(page.$('memberPool').parentNode.children[0], page.$('memberPool'));
   assert.equal(page.$('memberPool').querySelector('button'), pill);
-  assert.deepEqual(pill.querySelectorAll('.pool-percent').map(value => [value.textContent, value.className]), [['15%', 'pool-percent warn'], ['10%', 'pool-percent bad'], ['80%', 'pool-percent ok']]);
+  assert.deepEqual(pill.querySelectorAll('.pool-percent').map(value => [value.textContent, value.className]), [['85%', 'pool-percent warn'], ['90%', 'pool-percent bad'], ['20%', 'pool-percent ok']]);
+  assert.deepEqual(pill.querySelectorAll('.pool-provider').map(entry => entry.getAttribute('aria-label')), ['Claude · 85% used', 'ChatGPT/Codex · 90% used', 'API keys · 20% used', 'Grok · Unknown']);
   assert.equal(pill.querySelectorAll('.pool-provider').at(-1).className, 'pool-provider none');
   assert.equal(pill.querySelectorAll('svg').length, 3);
   for (const icon of pill.querySelectorAll('svg')) {
@@ -162,15 +163,35 @@ test('member boot renders pool provider minima and compact totals and account li
     assert.equal(icon.getAttribute('width'), null); assert.equal(icon.querySelectorAll('title').length, 0);
   }
   const popover = page.$('memberPoolPopover'), text = popover.textContent;
-  assert.match(text, /Claude1 of 2 ready5h70% left · 1h 20mWeek · Fable15% left/);
-  assert.match(text, /other · Max 20xnot in your accessupdated 2h ago15%/);
+  assert.match(text, /Claude1 of 2 ready5h30% used · 1h 20mWeek · Fable85% used/);
+  assert.match(text, /other · Max 20xnot in your accessupdated 2h ago85%/);
   assert.match(text, /marinayours\?/);
   assert.match(text, /Grok1 of 1 readyNo usage signal from this provider.*team\?/);
   assert.match(text, /Shared accounts plus your private ones\./);
-  assert.deepEqual(popover.querySelectorAll('[role="meter"]').map(meter => meter.getAttribute('aria-valuenow')), ['70', '15', '90', '10', '80']);
+  assert.deepEqual(popover.querySelectorAll('[role="meter"]').map(meter => meter.getAttribute('aria-valuenow')), ['30', '85', '10', '90', '20']);
   assert.deepEqual(popover.querySelectorAll('.pool-state').map(dot => dot.getAttribute('aria-label')), ['Ready', 'Limited', 'Ready']);
   assert.equal(popover.querySelectorAll('table').length, 0);
   assert.equal(page.requests.length, 0);
+});
+
+test('pool used percentages keep pill, meters and account lines consistent at thresholds and unknown readings', async () => {
+  for (const [remaining, percent, tone] of [[[0.15, 0.18], 85, 'warn'], [[0.05], 95, 'bad'], [[0.3], 70, 'warn'], [[0.1], 90, 'bad'], [[1], 0, 'ok'], [[0], 100, 'bad'], [[null], null, 'none']]) {
+    const page = memberPage(); await page.answer(200, { accounts: [] });
+    const totals = remaining.map(value => ({ key: 'fiveHour', remaining: value, nextResetAt: null }));
+    await page.answer(200, { generatedAt: Date.now(), groups: [{ provider: 'anthropic', totals, accounts: [{ owner: 'team', sharing: 'team', state: 'ok', usable: true, windows: remaining.map(value => ({ remaining: value, seenAt: null })) }] }] });
+    const provider = page.$('memberPool').querySelector('.pool-provider'), popover = page.$('memberPoolPopover');
+    assert.equal(provider.className, 'pool-provider ' + tone);
+    assert.equal(provider.textContent, percent === null ? '' : percent + '%');
+    assert.equal(provider.getAttribute('aria-label'), 'Claude · ' + (percent === null ? 'Unknown' : percent + '% used'));
+    assert.equal(popover.querySelector('.pool-account').querySelector('.pool-percent').textContent, percent === null ? '?' : percent + '%');
+    const meter = popover.querySelector('[role="meter"]'), fill = meter.querySelector('i');
+    assert.equal(meter.getAttribute('aria-valuenow'), percent === null ? null : String(percent));
+    assert.equal(meter.getAttribute('aria-valuetext'), percent === null ? 'Unknown' : percent + '% used');
+    assert.equal(Math.round(parseFloat(fill.style.width)), percent === null ? 0 : percent);
+    assert.equal(fill.className || '', ['bad', 'warn'].includes(tone) ? tone : '');
+    assert.match(popover.querySelector('.pool-window-line').textContent, percent === null ? /\?/ : new RegExp(percent + '% used'));
+    assert.doesNotMatch(popover.textContent, /\bleft\b/);
+  }
 });
 
 test('admin accounts header shows its pool pill and hides the member pill', async () => {
@@ -924,6 +945,6 @@ test('quota Refresh waits out a pre-probe pool read and fetches the pool again',
     provider: 'anthropic', totals: [{ key: 'fiveHour', remaining: 0.8, nextResetAt: null }], accounts: [],
   }] });
   await refresh;
-  assert.match(page.$('adminPool').textContent, /80% left/);
+  assert.match(page.$('adminPool').textContent, /20% used/);
   assert.equal(page.$('accountsRefresh').disabled, false);
 });

@@ -1,6 +1,7 @@
 # ADR-006: Pool capacity in the accounts header
 
 - **Status:** accepted
+  Decision 1's remaining percentage superseded by ADR-007.
 - **Date:** 2026-11-12
 - **Deciders:** sep1ol (owner)
 - **Layers:** dashboard

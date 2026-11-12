@@ -58,3 +58,4 @@ Each with the reason it was rejected.
 | [004](004-pool-view.md) | Team / Dashboard | Members see the pool's remaining quota | accepted |
 | [005](005-billing-state.md) | Gateway / Dashboard | Billing state per account | accepted |
 | [006](006-pool-pill.md) | Dashboard | Pool capacity in the accounts header | accepted |
+| [007](007-pool-pill-shows-used.md) | Dashboard | Pool pill shows used quota | accepted |
