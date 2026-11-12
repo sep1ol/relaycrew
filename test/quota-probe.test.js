@@ -606,6 +606,54 @@ test('concurrent manual and timer probes await the same active upstream cycle', 
   assert.deepEqual(am.accounts.map(account => account.quota.unified5h), [0.25, 0.25]);
 });
 
+test('manual quota refresh reads after the click and coalesces one follow-up cycle', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const am = new AccountManager([oauth('a'), oauth('b')], 0.98);
+  const resetAt = Date.now() + 7 * 24 * 3600_000;
+  const usage = percent => normalizeUsagePayload({
+    five_hour: { utilization: 10 },
+    seven_day: { utilization: 50 },
+    limits: [{ kind: 'weekly_scoped', group: 'weekly', percent,
+      resets_at: new Date(resetAt).toISOString(), scope: { model: { display_name: 'Fable' } } }],
+  });
+  for (const account of am.accounts) {
+    am.applyUsageData(account.index, usage(98));
+    assert.equal(am._isAvailable(account, 'claude-fable-5'), false);
+  }
+  const pending = [];
+  const readings = [];
+  let clicked = false;
+  const prober = new Prober(am, { probeFn: token => {
+    readings.push({ token, afterClick: clicked });
+    return clicked ? Promise.resolve(usage(0)) : new Promise(resolve => pending.push(resolve));
+  }, log: () => {} });
+  const background = prober.probeAll();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pending.length, 2);
+  const backgroundStartedAt = prober.lastRunStartedAt;
+  t.mock.timers.tick(1);
+  clicked = true;
+  const clickedAt = Date.now();
+  const manual = prober.probeAll();
+  const secondManual = prober.probeAll();
+  for (const resolve of pending) resolve(usage(98));
+  await Promise.all([background, manual, secondManual]);
+
+  for (const account of am.accounts) {
+    assert.equal(account.quota.unified7dFable, 0, 'manual refresh must read the Fable reset after the click');
+    assert.equal(am._isAvailable(account, 'claude-fable-5'), true);
+  }
+  assert.deepEqual(readings, [
+    { token: 't-a', afterClick: false }, { token: 't-b', afterClick: false },
+    { token: 't-a', afterClick: true }, { token: 't-b', afterClick: true },
+  ], 'two manual callers share exactly one follow-up reading per account');
+  const status = prober.getStatus();
+  assert.ok(Date.parse(status.lastRunStartedAt) > backgroundStartedAt);
+  assert.ok(Date.parse(status.lastRunStartedAt) >= clickedAt);
+  assert.ok(status.accounts.every(row => Date.parse(row.startedAt) >= clickedAt));
+  assert.equal(status.running, false);
+});
+
 test('background minute cycles read every eligible account without a dashboard', async t => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
   const am = new AccountManager([oauth('a'), oauth('b')], 0.98);
